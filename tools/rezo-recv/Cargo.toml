@@ -13,7 +13,7 @@ cpal = "0.15"
 mdns-sd = "0.11"
 opus = "0.3"
 rtrb = "0.3"
-socket2 = "0.5"
+socket2 = "0.6"
 
 [profile.release]
 opt-level = 3
