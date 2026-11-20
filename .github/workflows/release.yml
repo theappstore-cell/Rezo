@@ -198,6 +198,6 @@ jobs:
           - Checksum: compare with \`SHA256SUMS.txt\` (\`Get-FileHash <file>\` on Windows, \`shasum -a 256 <file>\` on macOS).
           - Dependencies: \`rezo-engine.cdx.json\` and \`rezo-recv.cdx.json\` (CycloneDX SBOM).
 
-          The files are not code-signed yet: Windows SmartScreen may warn ("More info" > "Run anyway"); on macOS, right-click the app > Open the first time.
+          The files are not code-signed yet: Windows SmartScreen may warn ("More info" > "Run anyway"); on macOS, try to open the app once, then click "Open Anyway" in System Settings > Privacy & Security.
           EOF
           gh release create "$TAG" out/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "Rezo ${v}" --notes-file notes.md
