@@ -11,7 +11,7 @@ repository = "https://github.com/theappstore-cell/Rezo"
 anyhow = "1"
 cpal = "0.15"
 mdns-sd = "0.11"
-opus = "0.3"
+opus = "0.4"
 rtrb = "0.3"
 socket2 = "0.5"
 
