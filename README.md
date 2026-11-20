@@ -1,6 +1,6 @@
 # Rezo
 
-Rezo sends what your Windows PC is playing to the speakers around your home, all at once: Sonos, UPnP/DLNA renderers, other PCs running a small receiver, and phones or tablets through a web page. Each speaker gets its own channel strip (gain, EQ, effects, pan, delay) so rooms can be balanced and lined up by ear.
+Rezo sends what your computer is playing to the speakers around your home, all at once: Sonos, UPnP/DLNA renderers, other PCs running a small receiver, and phones or tablets through a web page. Each speaker gets its own channel strip (gain, EQ, effects, pan, delay) so rooms can be balanced and lined up by ear.
 
 ![Console view](docs/images/console.jpg)
 
@@ -11,7 +11,7 @@ Rezo sends what your Windows PC is playing to the speakers around your home, all
 
 ## Features
 
-- **Sources**: everything the PC plays (WASAPI loopback) or a single application (process loopback, Windows 10 2004+).
+- **Sources**: everything the computer plays (WASAPI loopback on Windows, a loopback device such as BlackHole on macOS) or a single application (Windows 10 2004+).
 - **Outputs**
   - Sonos and UPnP/DLNA renderers, fed with a continuous 48 kHz WAV stream over HTTP.
   - Native receivers over UDP/RTP with Opus in low-delay mode (`tools/rezo-recv`), for the lowest latency.
@@ -37,16 +37,30 @@ Sonos speakers buffer HTTP streams before playing. Rezo keeps the stream open wh
 
 Get the latest version from the [Releases page](https://github.com/theappstore-cell/Rezo/releases/latest):
 
-- `Rezo_<version>_x64-setup.exe`: installer (adds a firewall rule for private networks, Start menu entry, uninstaller).
-- `Rezo-<version>-portable.exe`: single executable, nothing to install.
-- `rezo-recv-<version>-windows-x64.exe`: native receiver for another Windows PC.
+| File | For |
+|---|---|
+| `Rezo-<version>-windows-x64-setup.exe` | Windows 10/11 on Intel or AMD |
+| `Rezo-<version>-windows-arm64-setup.exe` | Windows 11 on ARM (Snapdragon laptops) |
+| `Rezo-<version>-windows-<arch>-portable.exe` | Windows, single executable, nothing to install |
+| `Rezo-<version>-macos-universal.dmg` | macOS 11 or later, Apple Silicon and Intel Macs |
+| `rezo-recv-<version>-*` | native receiver for another computer |
 
-The binaries are not code-signed yet, so Windows SmartScreen may warn on first launch ("More info" > "Run anyway").
+Every file is built by GitHub Actions from this repository and comes with a signed build attestation and a SHA-256 checksum: see [SECURITY.md](SECURITY.md) to verify a download. The binaries are not code-signed yet, so Windows SmartScreen may warn on first launch ("More info" > "Run anyway"); on macOS, open the app once from System Settings > Privacy & Security > "Open Anyway".
+
+### macOS setup
+
+macOS does not let applications record the system output directly, so Rezo records a loopback device:
+
+1. Install [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole) (free, open source).
+2. In **Audio MIDI Setup**, create a **Multi-Output Device** with your speakers or headphones and BlackHole, and select it as the sound output.
+3. Start Rezo and allow microphone access when asked: Rezo picks BlackHole automatically.
+
+The audio mixer window, single-application capture and Smart Output are Windows-only.
 
 ## Requirements
 
-- Windows 10 (2004 or later) or Windows 11, 64-bit.
-- PC and speakers on the same local network. Allow Rezo on private networks when the Windows Firewall asks.
+- Windows 10 (2004 or later) or Windows 11, x64 or ARM64; or macOS 11 or later.
+- Computer and speakers on the same local network. Allow Rezo on private networks when the firewall asks.
 
 ## Building
 

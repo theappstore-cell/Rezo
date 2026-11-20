@@ -105,11 +105,11 @@ pub fn set_default_render_mute(mute: bool) -> Result<()> {
 
 #[cfg(not(windows))]
 pub fn default_render_id() -> Result<String> {
-    Ok(String::new())
+    anyhow::bail!("unavailable on this platform")
 }
 #[cfg(not(windows))]
 pub fn mute_default() -> Result<Muted> {
-    Ok(Muted { device_id: String::new(), prev: false })
+    anyhow::bail!("Smart Output is only available on Windows")
 }
 #[cfg(not(windows))]
 pub fn set_mute(_: &str, _: bool) -> Result<()> {

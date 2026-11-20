@@ -385,7 +385,7 @@ impl Engine {
 
     fn start_capture(&self) -> CaptureHandle {
         let (source, pin) = self.store.read(|c| (c.source.clone(), c.settings.pin_engine_period));
-        let (prod, cons) = rtrb::RingBuffer::new(BLOCK_SAMPLES * 40);
+        let (prod, cons) = rtrb::RingBuffer::new(BLOCK_SAMPLES * 160);
         self.router.set_input(Some(cons));
         let target = match source {
             Source::System => CaptureTarget::System,
@@ -499,6 +499,15 @@ impl Engine {
         self.notify_changed();
     }
 
+    pub fn access_key(&self) -> String {
+        self.store.read(|c| c.access_key.clone())
+    }
+
+    pub fn key_ok(&self, key: &str) -> bool {
+        let k = self.access_key();
+        k.len() == key.len() && k.bytes().zip(key.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+    }
+
     fn target_for(&self, sp: &Speaker) -> Result<upnp::Target> {
         let local = network::local_ip_for(&sp.address).ok_or_else(|| anyhow!("interface réseau introuvable pour {}", sp.address))?;
         Ok(upnp::Target {
@@ -508,7 +517,7 @@ impl Engine {
             control: sp.control_url.clone().ok_or_else(|| anyhow!("URL de contrôle AVTransport inconnue"))?,
             is_sonos: sp.protocol == Protocol::Sonos,
             uuid: sp.uuid.clone(),
-            url: upnp::stream_url(&local, self.http_port.load(Ordering::Relaxed), &sp.id),
+            url: upnp::stream_url(&local, self.http_port.load(Ordering::Relaxed), &self.access_key(), &sp.id),
             title: sp.name.clone(),
             event: sp.event_url.clone(),
         })
@@ -1123,7 +1132,7 @@ impl Engine {
     pub fn receiver_info(&self, ip: Option<String>) -> Result<ReceiverInfo> {
         let ips: Vec<String> = network::lan_ipv4_addrs().iter().map(|a| a.to_string()).collect();
         let chosen = ip.or_else(|| ips.first().cloned()).ok_or_else(|| anyhow!("aucune adresse réseau locale détectée"))?;
-        let url = format!("http://{chosen}:{}/r", self.http_port.load(Ordering::Relaxed));
+        let url = format!("http://{chosen}:{}/r/{}", self.http_port.load(Ordering::Relaxed), self.access_key());
         let code = qrcode::QrCode::new(url.as_bytes())?;
         let qr_svg = code
             .render::<qrcode::render::svg::Color>()
@@ -1144,7 +1153,7 @@ impl Engine {
                 return;
             }
             let Some(local) = network::local_ip_for(&sp.address) else { return };
-            let callback = format!("http://{local}:{}/upnp/event/{id}", me.http_port.load(Ordering::Relaxed));
+            let callback = format!("http://{local}:{}/s/{}/event/{id}", me.http_port.load(Ordering::Relaxed), me.access_key());
             match upnp::subscribe(&me.http, &t, &callback).await {
                 Ok((sid, secs)) => {
                     log::info!("{id} : abonné aux événements UPnP ({secs} s)");

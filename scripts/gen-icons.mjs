@@ -102,12 +102,18 @@ write('icon.png', png(512, render(512, { background: true })));
 write('tray.png', png(32, render(32, { background: false })));
 write('icon.ico', ico([16, 32, 48, 64, 128, 256].map((s) => ({ size: s, data: png(s, render(s, { background: true })) }))));
 
-import { existsSync } from 'node:fs';
-const res = join(dirname(fileURLToPath(import.meta.url)), '..', 'android', 'app', 'src', 'main', 'res');
-if (existsSync(join(res, '..'))) {
-  for (const [dir, size] of [['mdpi', 48], ['hdpi', 72], ['xhdpi', 96], ['xxhdpi', 144], ['xxxhdpi', 192]]) {
-    mkdirSync(join(res, `mipmap-${dir}`), { recursive: true });
-    writeFileSync(join(res, `mipmap-${dir}`, 'ic_launcher.png'), png(size, render(size, { background: true })));
-  }
-  console.log('✓ icônes Android (mipmap-*)');
+function icns(entries) {
+  const parts = entries.map(([type, size]) => {
+    const data = png(size, render(size, { background: true }));
+    const head = Buffer.alloc(8);
+    head.write(type, 0, 'ascii');
+    head.writeUInt32BE(data.length + 8, 4);
+    return Buffer.concat([head, data]);
+  });
+  const head = Buffer.alloc(8);
+  head.write('icns', 0, 'ascii');
+  head.writeUInt32BE(8 + parts.reduce((n, b) => n + b.length, 0), 4);
+  return Buffer.concat([head, ...parts]);
 }
+
+write('icon.icns', icns([['ic11', 32], ['ic12', 64], ['ic07', 128], ['ic13', 256], ['ic08', 256], ['ic09', 512], ['ic14', 1024], ['ic10', 1024]]));

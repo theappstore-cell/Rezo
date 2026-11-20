@@ -260,8 +260,8 @@ pub struct Target {
     pub event: Option<String>,
 }
 
-pub fn stream_url(local_ip: &IpAddr, port: u16, id: &str) -> String {
-    format!("http://{local_ip}:{port}/stream/{id}.wav")
+pub fn stream_url(local_ip: &IpAddr, port: u16, key: &str, id: &str) -> String {
+    format!("http://{local_ip}:{port}/s/{key}/stream/{id}.wav")
 }
 
 fn didl(t: &Target) -> String {
@@ -395,10 +395,13 @@ pub fn parse_last_change(body: &str) -> Option<(Option<String>, Option<String>)>
 
 pub async fn event_handler(
     State(engine): State<Arc<Engine>>,
-    Path(id): Path<String>,
+    Path((key, id)): Path<(String, String)>,
     method: axum::http::Method,
     body: String,
 ) -> StatusCode {
+    if !engine.key_ok(&key) {
+        return StatusCode::NOT_FOUND;
+    }
     if method.as_str() != "NOTIFY" {
         return StatusCode::METHOD_NOT_ALLOWED;
     }
@@ -475,10 +478,13 @@ fn wav_headers(b: axum::http::response::Builder) -> axum::http::response::Builde
 // HEAD requests and tag probes must never replace the active stream, or the renderer drops playback.
 pub async fn wav_handler(
     State(engine): State<Arc<Engine>>,
-    Path(file): Path<String>,
+    Path((key, file)): Path<(String, String)>,
     method: axum::http::Method,
     headers: axum::http::HeaderMap,
 ) -> Response {
+    if !engine.key_ok(&key) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let id = file.strip_suffix(".wav").unwrap_or(&file).to_string();
     let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok()).map(str::to_string);
     let agent = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("?").chars().take(60).collect::<String>();

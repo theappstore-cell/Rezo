@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, State};
-use axum::http::header;
+use axum::extract::{Path, Query, State};
+use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use bytes::BytesMut;
 use futures_util::{SinkExt, StreamExt};
@@ -19,8 +19,11 @@ const WORKLET: &str = include_str!("../../web/worklet.js");
 
 const CHUNK_SAMPLES: usize = 480;
 
-pub async fn page() -> Html<&'static str> {
-    Html(PAGE)
+pub async fn page(State(engine): State<Arc<Engine>>, Path(key): Path<String>) -> Response {
+    if !engine.key_ok(&key) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    Html(PAGE).into_response()
 }
 
 pub async fn worklet() -> Response {
@@ -30,11 +33,15 @@ pub async fn worklet() -> Response {
 
 #[derive(Deserialize)]
 pub struct WsQuery {
+    key: String,
     id: String,
     name: Option<String>,
 }
 
 pub async fn ws(ws: WebSocketUpgrade, Query(q): Query<WsQuery>, State(engine): State<Arc<Engine>>) -> Response {
+    if !engine.key_ok(&q.key) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     ws.on_upgrade(move |socket| session(engine, q, socket))
 }
 

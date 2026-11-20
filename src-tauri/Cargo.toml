@@ -1,6 +1,6 @@
 [package]
 name = "rezo"
-version = "0.1.0"
+version = "0.2.0"
 description = "Real-time multi-room audio streaming from a Windows PC to Sonos, UPnP/DLNA, native receivers and web browsers"
 authors = ["theappstore-cell"]
 license = "GPL-3.0-only"
@@ -47,6 +47,9 @@ mdns-sd = "0.11"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 base64 = "0.22"
 png = "0.17"
+
+[target.'cfg(not(windows))'.dependencies]
+cpal = "0.15"
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.58"

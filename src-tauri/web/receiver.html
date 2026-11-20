@@ -47,6 +47,7 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
+  const KEY = location.pathname.split('/')[2] || '';
   const EN = !/^fr/i.test(navigator.language || '');
   const L = EN ? {
     sub: 'Turns this device into a PC speaker', name: 'Name of this device', vol: 'Volume of this device',
@@ -98,7 +99,7 @@
   function connect() {
     if (!joined) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${proto}://${location.host}/ws?id=${encodeURIComponent(id)}&name=${encodeURIComponent($('name').value)}`);
+    ws = new WebSocket(`${proto}://${location.host}/ws?key=${encodeURIComponent(KEY)}&id=${encodeURIComponent(id)}&name=${encodeURIComponent($('name').value)}`);
     ws.binaryType = 'arraybuffer';
     status(L.connecting);
     ws.onopen = () => { retry = 0; document.body.classList.add('live'); status(L.connected); };

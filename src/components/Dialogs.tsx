@@ -6,6 +6,7 @@ import { fmtMs } from '../lib/db';
 import { ROOM_COLORS, ROOM_ICONS, protocolBadge, protocolIcon } from '../lib/icons';
 import { useStore } from '../lib/store';
 import { setLang, t, useLang } from '../lib/i18n';
+import { isWindows } from '../lib/platform';
 import { useUi } from '../lib/ui';
 import type { ChannelMode, ReceiverInfo, Settings } from '../lib/types';
 import { Modal, Toggle } from './Modal';
@@ -333,15 +334,15 @@ export function SettingsModal() {
             <button type="button" className="key !h-[26px]" data-on={lang === 'en'} aria-pressed={lang === 'en'} onClick={() => setLang('en')}>English</button>
           </div>
         </Row>
-        <Row title={t('Démarrer avec Windows')} hint={t('Se lance directement dans la zone de notification.')}>
-          <Toggle on={!!autostart} label={t('Démarrer avec Windows')} onChange={async (v) => { setAutostart(v); await api.setAutostart(v).catch(() => setAutostart(!v)); }} />
+        <Row title={isWindows ? t('Démarrer avec Windows') : t("Ouvrir à l'ouverture de session")} hint={t('Se lance directement dans la zone de notification.')}>
+          <Toggle on={!!autostart} label={isWindows ? t('Démarrer avec Windows') : t("Ouvrir à l'ouverture de session")} onChange={async (v) => { setAutostart(v); await api.setAutostart(v).catch(() => setAutostart(!v)); }} />
         </Row>
-        <Row title="Smart Output" hint={t("Coupe la sortie du PC tant qu'une enceinte réseau joue, et rétablit exactement cette sortie ensuite (même si Windows a changé de sortie entre-temps).")}>
+        {isWindows && <Row title="Smart Output" hint={t("Coupe la sortie du PC tant qu'une enceinte réseau joue, et rétablit exactement cette sortie ensuite (même si Windows a changé de sortie entre-temps).")}>
           <Toggle on={set.smartOutput} label="Smart Output" onChange={(v) => void update({ smartOutput: v })} />
-        </Row>
-        <Row title={t('Période audio basse latence')} hint={t('Pendant les envois seulement : cale le moteur audio Windows à ~3 ms au lieu de 10 ms (enceintes natives). Change la période pour toutes les applications de cette sortie ; jamais appliqué sur une sortie Bluetooth. Désactivé par défaut.')}>
+        </Row>}
+        {isWindows && <Row title={t('Période audio basse latence')} hint={t('Pendant les envois seulement : cale le moteur audio Windows à ~3 ms au lieu de 10 ms (enceintes natives). Change la période pour toutes les applications de cette sortie ; jamais appliqué sur une sortie Bluetooth. Désactivé par défaut.')}>
           <Toggle on={set.pinEnginePeriod} label={t('Période audio basse latence')} onChange={(v) => void update({ pinEnginePeriod: v })} />
-        </Row>
+        </Row>}
         <Row title={t('Trame Opus (UDP natif)')} hint={t('2,5 ms = latence minimale, 5 ms = plus robuste Wi-Fi.')}>
           <select className="rounded-[2px] border border-line bg-inset px-2 py-1.5 text-[12px]" value={set.udpFrameMs} onChange={(e) => void update({ udpFrameMs: Number(e.target.value) })}>
             <option value={2.5}>{t('2,5 ms')}</option>

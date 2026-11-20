@@ -55,6 +55,7 @@ pub fn start(target: CaptureTarget, producer: Producer<f32>, wake: Thread, pin_e
 
 struct Pusher {
     prod: Producer<f32>,
+    pushed: u64,
     wake: Thread,
     tmp: Vec<f32>,
     step: f64,
@@ -64,7 +65,7 @@ struct Pusher {
 
 impl Pusher {
     fn new(prod: Producer<f32>, wake: Thread) -> Self {
-        Self { prod, wake, tmp: Vec::with_capacity(16384), step: 1.0, pos: 0.0, last: [0.0; 2] }
+        Self { prod, pushed: 0, wake, tmp: Vec::with_capacity(16384), step: 1.0, pos: 0.0, last: [0.0; 2] }
     }
 
     fn set_rate(&mut self, rate: u32) {
@@ -107,6 +108,7 @@ impl Pusher {
         if stereo.is_empty() {
             return;
         }
+        self.pushed += (stereo.len() / 2) as u64;
         if self.prod.slots() >= stereo.len() {
             if let Ok(chunk) = self.prod.write_chunk_uninit(stereo.len()) {
                 chunk.fill_from_iter(stereo.iter().copied());
@@ -291,6 +293,9 @@ mod imp {
         let mut last_data = Instant::now();
         let mut silence_clock = Instant::now();
         let mut idle = false;
+        let session_start = Instant::now();
+        let pushed_at_start = pusher.pushed;
+        let mut last_silent = true;
         let mut last_dev_check = Instant::now();
         let mut result: anyhow::Result<()> = Ok(());
 
@@ -317,12 +322,22 @@ mod imp {
                     break 'outer;
                 }
                 let silent = flags & (AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0;
+                last_silent = silent;
                 convert_and_push(pusher, data, frames as usize, silent, &fmt);
                 let _ = cap.ReleaseBuffer(frames);
                 got = true;
             }
 
             let now = Instant::now();
+            // A muted or idle endpoint can deliver fewer silent frames than real time (seen on S/PDIF outputs
+            // muted by Smart Output): top up with silence so receivers never drain their buffers.
+            if last_silent || !got {
+                let due = now.duration_since(session_start).as_secs_f64() * 48_000.0;
+                let behind = due - (pusher.pushed - pushed_at_start) as f64;
+                if behind > 1440.0 {
+                    pusher.push_silence((behind - 480.0) as usize);
+                }
+            }
             if got {
                 last_data = now;
                 idle = false;
@@ -544,23 +559,112 @@ mod imp {
     }
 }
 
+// macOS and Linux have no system loopback in cpal: Rezo records an input device, preferring virtual
+// loopback drivers (BlackHole, Loopback, Soundflower, PulseAudio/PipeWire monitors).
 #[cfg(not(windows))]
 mod imp {
     use super::*;
+    use anyhow::{anyhow, bail};
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+    const LOOPBACK_HINTS: [&str; 5] = ["blackhole", "loopback", "soundflower", "monitor", "rezo"];
+
+    fn pick_device(host: &cpal::Host) -> Option<cpal::Device> {
+        if let Ok(devices) = host.input_devices() {
+            for d in devices {
+                let name = d.name().unwrap_or_default().to_lowercase();
+                if LOOPBACK_HINTS.iter().any(|h| name.contains(h)) {
+                    return Some(d);
+                }
+            }
+        }
+        host.default_input_device()
+    }
+
+    fn build<T: cpal::SizedSample + Send + 'static>(
+        device: &cpal::Device,
+        config: &cpal::StreamConfig,
+        pusher: Arc<Mutex<Pusher>>,
+        failed: Arc<AtomicBool>,
+        conv: fn(T) -> f32,
+    ) -> Result<cpal::Stream, cpal::BuildStreamError> {
+        let channels = config.channels.max(1) as usize;
+        let mut stereo: Vec<f32> = Vec::with_capacity(16384);
+        device.build_input_stream(
+            config,
+            move |data: &[T], _: &cpal::InputCallbackInfo| {
+                stereo.clear();
+                for frame in data.chunks_exact(channels) {
+                    let l = conv(frame[0]);
+                    let r = if channels > 1 { conv(frame[1]) } else { l };
+                    stereo.push(l);
+                    stereo.push(r);
+                }
+                pusher.lock().push_stereo(&stereo);
+            },
+            move |e| {
+                log::warn!("capture : {e}");
+                failed.store(true, Ordering::Release);
+            },
+            None,
+        )
+    }
+
+    fn run_session(pusher: &Arc<Mutex<Pusher>>, stop: &AtomicBool, status: &CaptureStatus) -> anyhow::Result<()> {
+        let host = cpal::default_host();
+        let device = pick_device(&host).ok_or_else(|| anyhow!("aucun périphérique d'entrée audio"))?;
+        let name = device.name().unwrap_or_default();
+        let supported = device.default_input_config()?;
+        let format = supported.sample_format();
+        let config: cpal::StreamConfig = supported.into();
+        pusher.lock().set_rate(config.sample_rate.0);
+        let failed = Arc::new(AtomicBool::new(false));
+        let stream = match format {
+            cpal::SampleFormat::F32 => build::<f32>(&device, &config, pusher.clone(), failed.clone(), |s| s)?,
+            cpal::SampleFormat::I16 => build::<i16>(&device, &config, pusher.clone(), failed.clone(), |s| s as f32 / 32768.0)?,
+            cpal::SampleFormat::U16 => build::<u16>(&device, &config, pusher.clone(), failed.clone(), |s| (s as f32 - 32768.0) / 32768.0)?,
+            cpal::SampleFormat::I32 => build::<i32>(&device, &config, pusher.clone(), failed.clone(), |s| s as f32 / 2_147_483_648.0)?,
+            other => bail!("format d'échantillon non géré : {other:?}"),
+        };
+        stream.play()?;
+        status.running.store(true, Ordering::Release);
+        *status.error.lock() = None;
+        log::info!("capture démarrée ({name}, {} Hz, {} ch)", config.sample_rate.0, config.channels);
+        while !stop.load(Ordering::Acquire) && !failed.load(Ordering::Acquire) {
+            thread::sleep(Duration::from_millis(50));
+        }
+        drop(stream);
+        if failed.load(Ordering::Acquire) {
+            bail!("flux d'entrée audio interrompu");
+        }
+        Ok(())
+    }
 
     pub fn thread_main(
-        _target: CaptureTarget,
-        mut producer: Producer<f32>,
+        target: CaptureTarget,
+        producer: Producer<f32>,
         wake: Thread,
         _pin: bool,
         stop: Arc<AtomicBool>,
         status: Arc<CaptureStatus>,
     ) {
-        *status.error.lock() = Some("capture WASAPI disponible uniquement sous Windows".into());
-        let _ = &mut producer;
-        while !stop.load(Ordering::Acquire) {
-            wake.unpark();
-            thread::sleep(Duration::from_millis(10));
+        let _mmcss = super::super::promote_current_thread();
+        if let CaptureTarget::Process { .. } = target {
+            log::warn!("capture d'une seule application indisponible sur ce système : capture du périphérique d'entrée");
         }
+        let pusher = Arc::new(Mutex::new(Pusher::new(producer, wake)));
+        while !stop.load(Ordering::Acquire) {
+            if let Err(e) = run_session(&pusher, &stop, &status) {
+                log::warn!("capture : {e} — nouvelle tentative");
+                *status.error.lock() = Some(e.to_string());
+                status.running.store(false, Ordering::Release);
+                let t0 = Instant::now();
+                while t0.elapsed() < Duration::from_secs(1) && !stop.load(Ordering::Acquire) {
+                    pusher.lock().push_silence(240);
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
+        status.running.store(false, Ordering::Release);
     }
 }

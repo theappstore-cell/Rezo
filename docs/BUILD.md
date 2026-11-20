@@ -1,6 +1,8 @@
 # Build, firewall and network guide
 
-## 1. Building (Windows 10 2004+ / 11)
+## 1. Building
+
+### Windows 10 2004+ / 11
 
 | Tool | Why |
 |---|---|
@@ -19,7 +21,31 @@ npm run tauri build     # src-tauri/target/release/bundle/nsis/Rezo_<version>_x6
 
 `cargo build --release` in `src-tauri` also produces a standalone `Rezo.exe` with the interface embedded; add `--features console` to keep a console window with logs.
 
-Reference native receiver (another PC, a Raspberry Pi, macOS):
+ARM64 (Windows on ARM) from an x64 machine needs the "MSVC ARM64 build tools" component of Visual Studio:
+
+```powershell
+rustup target add aarch64-pc-windows-msvc
+npx tauri build --target aarch64-pc-windows-msvc --bundles nsis
+```
+
+### macOS 11+
+
+Xcode command line tools, Rust, CMake (`brew install cmake`) and Node.js 20+. Build libopus from source so the app does not depend on Homebrew:
+
+```bash
+export LIBOPUS_STATIC=1 LIBOPUS_NO_PKG=1
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm ci
+npx tauri build --target universal-apple-darwin --bundles app,dmg
+```
+
+### Releases
+
+Published binaries come from `.github/workflows/release.yml` only (Windows x64 and ARM64, macOS universal), with checksums, build attestations and SBOMs. See [SECURITY.md](../SECURITY.md).
+
+### Reference native receiver
+
+Another PC, a Raspberry Pi, a Mac:
 
 ```powershell
 cd tools/rezo-recv; cargo run --release -- --name "Living room PC" --port 5004 --buffer-ms 20

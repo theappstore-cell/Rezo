@@ -168,6 +168,7 @@ const EN: Record<string, string> = {
   Langue: 'Language',
   "Langue de l'interface et du menu de la zone de notification.": 'Language of the interface and the notification-area menu.',
   'Démarrer avec Windows': 'Start with Windows',
+  "Ouvrir à l'ouverture de session": 'Open at login',
   'Se lance directement dans la zone de notification.': 'Starts straight into the notification area.',
   "Coupe la sortie du PC tant qu'une enceinte réseau joue, et rétablit exactement cette sortie ensuite (même si Windows a changé de sortie entre-temps).":
     'Mutes the PC output while a network speaker plays, then restores exactly that output (even if Windows switched outputs in the meantime).',

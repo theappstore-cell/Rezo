@@ -21,12 +21,11 @@ pub async fn serve(engine: Arc<Engine>, preferred: u16) -> Result<u16> {
     let port = listener.local_addr()?.port();
 
     let app = Router::new()
-        .route("/", get(web_receiver::page))
-        .route("/r", get(web_receiver::page))
         .route("/r/worklet.js", get(web_receiver::worklet))
+        .route("/r/{key}", get(web_receiver::page))
         .route("/ws", get(web_receiver::ws))
-        .route("/stream/{file}", get(sonos_upnp::wav_handler))
-        .route("/upnp/event/{id}", any(sonos_upnp::event_handler))
+        .route("/s/{key}/stream/{file}", get(sonos_upnp::wav_handler))
+        .route("/s/{key}/event/{id}", any(sonos_upnp::event_handler))
         .with_state(engine);
 
     let listener = listener.tap_io(|tcp| {

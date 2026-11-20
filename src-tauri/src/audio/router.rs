@@ -11,7 +11,9 @@ use super::{AtomicF32, BLOCK_FRAMES, BLOCK_SAMPLES, CHANNELS, SAMPLE_RATE};
 use crate::state::rooms::ChannelParams;
 
 pub const DEFAULT_DELAY_FRAMES: usize = SAMPLE_RATE as usize / 10;
-const MAX_BACKLOG_SAMPLES: usize = SAMPLE_RATE as usize / 50 * CHANNELS;
+// Some endpoints (idle or muted digital outputs) deliver 30-100 ms per packet: only a backlog that large is
+// a real lag worth dropping, otherwise every burst would lose its tail.
+const MAX_BACKLOG_SAMPLES: usize = SAMPLE_RATE as usize / 5 * CHANNELS;
 const TARGET_BACKLOG_SAMPLES: usize = BLOCK_SAMPLES * 2;
 const FILTER_TAIL_FRAMES: usize = SAMPLE_RATE as usize / 10;
 const MAX_BURST_BLOCKS: u32 = 8;

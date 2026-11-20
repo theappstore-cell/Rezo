@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { dbToPos, fmtDb, posToDb, roundTo } from '../lib/db';
 import { useStore } from '../lib/store';
 import { t } from '../lib/i18n';
+import { isWindows } from '../lib/platform';
 import { useUi } from '../lib/ui';
 import type { AudioApp, ViewId } from '../lib/types';
 import { LedMeter } from './LedMeter';
@@ -167,7 +168,7 @@ function Actions({ compact }: { compact: boolean }) {
       <button type="button" onClick={() => open({ type: 'add' })} className="key key-primary flex items-center gap-1.5 !h-7" title={t('Ajouter un appareil')}>
         <Plus size={13} /> {compact ? <span className="sr-only">{t('Ajouter un appareil')}</span> : t('Ajouter un appareil')}
       </button>
-      <button type="button" aria-label={t('Mixeur audio')} title={t('Mixeur audio : sorties filaires / Bluetooth et volume par application')} onClick={() => void api.openMixer()} className={iconBtn}><SlidersHorizontal size={14} /></button>
+      {isWindows && <button type="button" aria-label={t('Mixeur audio')} title={t('Mixeur audio : sorties filaires / Bluetooth et volume par application')} onClick={() => void api.openMixer()} className={iconBtn}><SlidersHorizontal size={14} /></button>}
       <button type="button" aria-label={t('Réglages')} title={t('Réglages')} onClick={() => open({ type: 'settings' })} className={iconBtn}><Settings size={14} /></button>
       <button type="button" aria-label={pinned ? t('Désépingler la fenêtre') : t('Épingler la fenêtre')} aria-pressed={pinned} data-on={pinned}
         title={t('Épingler : la fenêtre ne se masque plus quand elle perd le focus')}

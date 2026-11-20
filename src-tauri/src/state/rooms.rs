@@ -293,6 +293,7 @@ pub struct Config {
     pub pc_prev_mute: bool,
     pub pc_muted_device: Option<String>,
     pub pc_pending_restore: Vec<PendingRestore>,
+    pub access_key: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -333,6 +334,7 @@ impl Default for Config {
             pc_prev_mute: false,
             pc_muted_device: None,
             pc_pending_restore: vec![],
+            access_key: String::new(),
         }
     }
 }
@@ -426,7 +428,12 @@ impl Store {
             cfg.settings.pin_engine_period = false;
         }
         cfg.version = CONFIG_VERSION;
-        Self { path, cfg: RwLock::new(cfg), dirty: AtomicBool::new(migrated) }
+        let mut dirty = migrated;
+        if cfg.access_key.len() < 32 {
+            cfg.access_key = new_access_key();
+            dirty = true;
+        }
+        Self { path, cfg: RwLock::new(cfg), dirty: AtomicBool::new(dirty) }
     }
 
     pub fn read<R>(&self, f: impl FnOnce(&Config) -> R) -> R {
@@ -452,4 +459,19 @@ impl Store {
             }
         }
     }
+}
+
+// Secret placed in every URL served to the LAN (streams, browser receiver, UPnP callbacks): without it the
+// HTTP server answers 404, so other devices on the network cannot listen to the PC.
+pub fn new_access_key() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let mut out = String::with_capacity(32);
+    for i in 0..2u64 {
+        let mut h = RandomState::new().build_hasher();
+        h.write_u64(i);
+        h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+        out.push_str(&format!("{:016x}", h.finish()));
+    }
+    out
 }
