@@ -57,7 +57,7 @@ Configuration lives in `%APPDATA%\Rezo\config.json` (atomic writes, `.bak` copy 
 
 Rezo has to accept incoming TCP connections (Sonos fetching the WAV stream, browsers) and UDP replies (SSDP, mDNS). Without a rule Windows asks on first launch: tick **Private networks**.
 
-- The NSIS installer adds a program rule limited to the private profile.
+- The NSIS installer adds a program rule limited to the private profile when installing for all users (a per-user install has no rights to change the firewall, so Windows asks on first launch).
 - Otherwise, as administrator: `powershell -ExecutionPolicy Bypass -File scripts\firewall.ps1`.
 - The network must be classified as **Private** (Settings > Network & Internet > Properties), or Windows blocks incoming traffic even with the rule.
 - HTTP port: 49494 by default (Settings). If it is taken, Rezo picks a free port and the QR code shows it.

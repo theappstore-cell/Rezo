@@ -54,9 +54,14 @@ fn build_tray(app: &AppHandle, lang: &str) -> tauri::Result<()> {
 pub fn run() {
     let mut logger = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
     #[cfg(not(feature = "console"))]
-    if let Some(dir) = std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("Rezo")) {
-        let _ = std::fs::create_dir_all(&dir);
-        if let Ok(f) = std::fs::File::create(dir.join("rezo.log")) {
+    let log_path = std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("Rezo").join("rezo.log"));
+    #[cfg(not(feature = "console"))]
+    if let Some(path) = &log_path {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        // Append only: a second instance exits in the single-instance plugin and must not wipe the running log.
+        if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             logger.target(env_logger::Target::Pipe(Box::new(f)));
         }
     }
@@ -76,7 +81,11 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| ui::show_main(app, None)))
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
-        .setup(|app| {
+        .setup(move |app| {
+            #[cfg(not(feature = "console"))]
+            if let Some(path) = &log_path {
+                let _ = std::fs::OpenOptions::new().write(true).open(path).and_then(|f| f.set_len(0));
+            }
             let dir = match std::env::var_os("REZO_CONFIG_DIR") {
                 Some(d) => std::path::PathBuf::from(d),
                 None => app.path().config_dir()?.join("Rezo"),

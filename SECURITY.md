@@ -30,7 +30,8 @@ The binaries are not code-signed yet. The workflow signs them automatically once
 ## What Rezo does on your machine
 
 - No telemetry, no update check, no account: Rezo only talks to devices on your local network.
-- Installs for the current user by default; the per-machine option asks for administrator rights only to add a Windows Firewall rule limited to private networks.
+- The Windows installer lets you choose between your account only (no administrator rights) and all users (administrator rights, also adds a Windows Firewall rule limited to private networks). A silent install (`/S`) run as administrator installs for all users. The portable executable installs nothing.
+- Uninstalling removes the program, its shortcuts, its firewall rule and its login entry; your settings in `%APPDATA%\Rezo` are kept unless you tick "Delete the application data".
 - The HTTP server that feeds speakers and browsers requires a random per-install key in every URL; other devices on the network get a 404 without it.
 - The interface runs with a strict Content Security Policy and only three Tauri permissions (listen to events, stop listening, drag the window).
 - When no speaker is enabled, no audio stream, real-time thread or MIDI port is held.
