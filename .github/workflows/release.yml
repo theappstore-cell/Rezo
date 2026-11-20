@@ -59,11 +59,11 @@ jobs:
         shell: bash
         run: |
           v=$(node -p "require('./package.json').version")
-          mkdir dist
-          cp src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe "dist/Rezo-${v}-windows-${{ matrix.arch }}-setup.exe"
-          cp src-tauri/target/${{ matrix.target }}/release/Rezo.exe "dist/Rezo-${v}-windows-${{ matrix.arch }}-portable.exe"
-          cp tools/rezo-recv/target/${{ matrix.target }}/release/rezo-recv.exe "dist/rezo-recv-${v}-windows-${{ matrix.arch }}.exe"
-          ls -l dist
+          mkdir -p out
+          cp src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe "out/Rezo-${v}-windows-${{ matrix.arch }}-setup.exe"
+          cp src-tauri/target/${{ matrix.target }}/release/Rezo.exe "out/Rezo-${v}-windows-${{ matrix.arch }}-portable.exe"
+          cp tools/rezo-recv/target/${{ matrix.target }}/release/rezo-recv.exe "out/rezo-recv-${v}-windows-${{ matrix.arch }}.exe"
+          ls -l out
       - name: Sign (only when a code-signing certificate is configured)
         if: env.HAS_WINDOWS_CERT == 'true'
         shell: pwsh
@@ -74,7 +74,7 @@ jobs:
           $pfx = Join-Path $env:RUNNER_TEMP 'cert.pfx'
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
-          foreach ($f in Get-ChildItem dist\*.exe) {
+          foreach ($f in Get-ChildItem out\*.exe) {
             & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f.FullName
             if ($LASTEXITCODE -ne 0) { exit 1 }
           }
@@ -82,7 +82,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-${{ matrix.arch }}
-          path: dist/*
+          path: out/*
           if-no-files-found: error
 
   macos:
@@ -127,17 +127,17 @@ jobs:
       - name: Collect files
         run: |
           v=$(node -p "require('./package.json').version")
-          mkdir dist
-          cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg "dist/Rezo-${v}-macos-universal.dmg"
-          lipo -create -output "dist/rezo-recv-${v}-macos-universal" \
+          mkdir -p out
+          cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg "out/Rezo-${v}-macos-universal.dmg"
+          lipo -create -output "out/rezo-recv-${v}-macos-universal" \
             tools/rezo-recv/target/aarch64-apple-darwin/release/rezo-recv \
             tools/rezo-recv/target/x86_64-apple-darwin/release/rezo-recv
-          lipo -info "dist/rezo-recv-${v}-macos-universal"
-          ls -l dist
+          lipo -info "out/rezo-recv-${v}-macos-universal"
+          ls -l out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-universal
-          path: dist/*
+          path: out/*
           if-no-files-found: error
 
   publish:
@@ -154,7 +154,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          path: dist
+          path: out
           merge-multiple: true
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
@@ -164,15 +164,15 @@ jobs:
           cargo install cargo-cyclonedx --locked
           cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json --override-filename rezo-engine.cdx
           cargo cyclonedx --manifest-path tools/rezo-recv/Cargo.toml --format json --override-filename rezo-recv.cdx
-          cp src-tauri/rezo-engine.cdx.json tools/rezo-recv/rezo-recv.cdx.json dist/
+          cp src-tauri/rezo-engine.cdx.json tools/rezo-recv/rezo-recv.cdx.json out/
       - name: Checksums
         run: |
-          cd dist
+          cd out
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/*
+          subject-path: out/*
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -200,4 +200,4 @@ jobs:
 
           The files are not code-signed yet: Windows SmartScreen may warn ("More info" > "Run anyway"); on macOS, right-click the app > Open the first time.
           EOF
-          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "Rezo ${v}" --notes-file notes.md
+          gh release create "$TAG" out/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "Rezo ${v}" --notes-file notes.md
