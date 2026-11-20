@@ -43,6 +43,8 @@ npx tauri build --target universal-apple-darwin --bundles app,dmg
 
 Published binaries come from `.github/workflows/release.yml` only (Windows x64 and ARM64, macOS universal), with checksums, build attestations and SBOMs. See [SECURITY.md](../SECURITY.md).
 
+Push a `v*` tag (or run the workflow by hand with a tag name): it builds everything and creates a draft release, which you then publish from GitHub. A tag whose release already exists is skipped.
+
 ### Reference native receiver
 
 Another PC, a Raspberry Pi, a Mac:

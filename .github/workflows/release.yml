@@ -19,8 +19,29 @@ env:
   LIBOPUS_NO_PKG: "1"
 
 jobs:
+  check:
+    name: Check release
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          # Publishing a draft made by a manual run creates its tag, which triggers this workflow again.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, nothing to build."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
   windows:
     name: Windows ${{ matrix.arch }}
+    needs: check
+    if: needs.check.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -87,6 +108,8 @@ jobs:
 
   macos:
     name: macOS universal
+    needs: check
+    if: needs.check.outputs.build == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
