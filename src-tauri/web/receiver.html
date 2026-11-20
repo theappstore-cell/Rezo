@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<title>Rezo — Récepteur</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100dvh; display: grid; place-items: center; background: #0b0d10; color: #e8ecf1;
+         font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding: env(safe-area-inset-top) 20px env(safe-area-inset-bottom); }
+  main { width: min(420px, 100%); text-align: center; }
+  h1 { font-size: 22px; letter-spacing: .04em; margin: 0 0 4px; }
+  p.sub { margin: 0 0 28px; color: #8b95a3; font-size: 14px; }
+  .disc { width: 148px; height: 148px; margin: 0 auto 28px; border-radius: 50%; display: grid; place-items: center;
+          background: radial-gradient(circle at 50% 40%, #1b2430, #10151c); border: 1px solid #263140; position: relative; }
+  .disc::before, .disc::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid #38bdf8; opacity: 0; }
+  .live .disc::before { animation: ring 2.4s ease-out infinite; }
+  .live .disc::after  { animation: ring 2.4s ease-out 1.2s infinite; }
+  @keyframes ring { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(1.6); opacity: 0; } }
+  .disc svg { width: 56px; height: 56px; stroke: #38bdf8; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  label { display: block; text-align: left; font-size: 12px; color: #8b95a3; margin: 0 0 6px; }
+  input[type=text] { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid #263140; background: #10151c; color: inherit; font: inherit; }
+  button { width: 100%; margin-top: 16px; padding: 15px; border: 0; border-radius: 14px; font: inherit; font-weight: 600; color: #04121c;
+           background: #38bdf8; cursor: pointer; }
+  button.stop { background: #1b2430; color: #e8ecf1; border: 1px solid #263140; }
+  .stat { margin-top: 18px; font-size: 13px; color: #8b95a3; min-height: 1.4em; }
+  .stat b { color: #e8ecf1; font-variant-numeric: tabular-nums; }
+  .vol { margin-top: 22px; text-align: left; }
+  input[type=range] { width: 100%; accent-color: #38bdf8; }
+  .tip { margin-top: 22px; font-size: 12px; color: #6b7684; }
+</style>
+</head>
+<body>
+<main id="root">
+  <h1>Rezo</h1>
+  <p class="sub" data-t="sub">Transforme cet appareil en enceinte du PC</p>
+  <div class="disc"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg></div>
+  <label for="name" data-t="name">Nom de cet appareil</label>
+  <input id="name" type="text" maxlength="40" autocomplete="off" placeholder="Téléphone de …">
+  <button id="go">Rejoindre la diffusion</button>
+  <div class="vol"><label for="vol" data-t="vol">Volume de cet appareil</label><input id="vol" type="range" min="0" max="100" value="100"></div>
+  <div class="stat" id="stat"></div>
+  <p class="tip" data-t="tip">Gardez cette page ouverte et l'écran allumé. Sur iPhone, désactivez le mode silencieux.</p>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const EN = !/^fr/i.test(navigator.language || '');
+  const L = EN ? {
+    sub: 'Turns this device into a PC speaker', name: 'Name of this device', vol: 'Volume of this device',
+    tip: 'Keep this page open and the screen on. On iPhone, turn off silent mode.',
+    join: 'Join the stream', leave: 'Leave', connecting: 'Connecting…', connected: 'Connected — waiting for PC audio…',
+    reconnecting: 'Reconnecting…', buffer: 'Buffer', dropouts: 'dropouts', error: 'Error: ', browser: 'Browser', placeholder: 'My phone',
+  } : {
+    join: 'Rejoindre la diffusion', leave: 'Quitter', connecting: 'Connexion…', connected: 'Connecté — en attente du son du PC…',
+    reconnecting: 'Reconnexion…', buffer: 'Tampon', dropouts: 'coupures', error: 'Erreur : ', browser: 'Navigateur', placeholder: 'Téléphone de …',
+  };
+  if (EN) {
+    document.documentElement.lang = 'en';
+    document.title = 'Rezo — Receiver';
+    document.querySelectorAll('[data-t]').forEach((el) => { el.textContent = L[el.dataset.t]; });
+    $('go').textContent = L.join;
+    $('name').placeholder = L.placeholder;
+  }
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+  };
+  let id = store.get('rezo.id');
+  if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()).replace(/[^a-z0-9]/gi, '').slice(0, 24); store.set('rezo.id', id); }
+  $('name').value = store.get('rezo.name') || (/iPhone|iPad/.test(navigator.userAgent) ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android' : L.browser);
+
+  let ctx = null, node = null, gain = null, ws = null, joined = false, wake = null, fill = 0, under = 0, retry = 0;
+
+  const status = (html) => { $('stat').innerHTML = html; };
+
+  async function join() {
+    store.set('rezo.name', $('name').value);
+    joined = true;
+    $('go').textContent = L.leave; $('go').className = 'stop';
+    try { ctx = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 }); }
+    catch { ctx = new AudioContext({ latencyHint: 'interactive' }); }
+    await ctx.audioWorklet.addModule('/r/worklet.js');
+    node = new AudioWorkletNode(ctx, 'rezo-player', { outputChannelCount: [2], processorOptions: { srcRate: 48000 } });
+    gain = ctx.createGain(); gain.gain.value = $('vol').value / 100;
+    node.connect(gain).connect(ctx.destination);
+    node.port.onmessage = (e) => {
+      fill = e.data.fillMs; under = e.data.underruns;
+      status(`${L.buffer} <b>${fill.toFixed(0)} ms</b> · ${L.dropouts} <b>${under}</b>`);
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'stats', buf: fill }));
+    };
+    try { wake = await navigator.wakeLock?.request('screen'); } catch {}
+    connect();
+  }
+
+  function connect() {
+    if (!joined) return;
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws?id=${encodeURIComponent(id)}&name=${encodeURIComponent($('name').value)}`);
+    ws.binaryType = 'arraybuffer';
+    status(L.connecting);
+    ws.onopen = () => { retry = 0; document.body.classList.add('live'); status(L.connected); };
+    ws.onmessage = (e) => {
+      if (typeof e.data === 'string') return;
+      if (ctx.state === 'suspended') ctx.resume();
+      node.port.postMessage(e.data, [e.data]);
+    };
+    ws.onclose = () => {
+      document.body.classList.remove('live');
+      if (!joined) return;
+      status(L.reconnecting);
+      setTimeout(connect, Math.min(1000 * ++retry, 5000));
+    };
+  }
+
+  function leave() {
+    joined = false;
+    try { ws && ws.close(); } catch {}
+    try { node && node.disconnect(); ctx && ctx.close(); } catch {}
+    try { wake && wake.release(); } catch {}
+    ctx = node = ws = null;
+    document.body.classList.remove('live');
+    $('go').textContent = L.join; $('go').className = '';
+    status('');
+  }
+
+  $('go').addEventListener('click', () => (joined ? leave() : join().catch((e) => { status(L.error + e.message); leave(); })));
+  $('vol').addEventListener('input', () => { if (gain) gain.gain.value = $('vol').value / 100; });
+  document.addEventListener('visibilitychange', async () => {
+    if (joined && document.visibilityState === 'visible') { try { wake = await navigator.wakeLock?.request('screen'); } catch {} if (ctx && ctx.state === 'suspended') ctx.resume(); }
+  });
+})();
+</script>
+</body>
+</html>
