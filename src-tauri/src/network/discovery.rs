@@ -26,12 +26,8 @@ pub fn browse(on_found: impl Fn(NativeAnnounce) + Send + 'static) -> Result<Serv
     tauri::async_runtime::spawn(async move {
         while let Ok(ev) = rx.recv_async().await {
             if let ServiceEvent::ServiceResolved(info) = ev {
-                let ip = info
-                    .get_addresses()
-                    .iter()
-                    .find(|a| a.is_ipv4())
-                    .or_else(|| info.get_addresses().iter().next())
-                    .copied();
+                let addrs = info.get_addresses();
+                let ip = addrs.iter().find(|a| a.is_ipv4()).or_else(|| addrs.iter().next()).map(|a| a.to_ip_addr());
                 let Some(ip) = ip else { continue };
                 let fullname = info.get_fullname().to_string();
                 let instance = fullname.split('.').next().unwrap_or("Récepteur").to_string();

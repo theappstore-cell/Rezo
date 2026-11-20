@@ -175,7 +175,7 @@ mod imp {
             let ok = GetIconInfo(large, &mut info).is_ok();
             let result = if ok && !info.hbmColor.is_invalid() {
                 let mut bm = BITMAP::default();
-                GetObjectW(info.hbmColor, std::mem::size_of::<BITMAP>() as i32, Some(&mut bm as *mut _ as *mut _));
+                GetObjectW(info.hbmColor.into(), std::mem::size_of::<BITMAP>() as i32, Some(&mut bm as *mut _ as *mut _));
                 let (w, h) = (bm.bmWidth, bm.bmHeight);
                 if w <= 0 || h <= 0 {
                     None
@@ -218,10 +218,10 @@ mod imp {
                 None
             };
             if !info.hbmColor.is_invalid() {
-                let _ = DeleteObject(info.hbmColor);
+                let _ = DeleteObject(info.hbmColor.into());
             }
             if !info.hbmMask.is_invalid() {
-                let _ = DeleteObject(info.hbmMask);
+                let _ = DeleteObject(info.hbmMask.into());
             }
             let _ = DestroyIcon(large);
             result

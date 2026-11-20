@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BufferSize, SampleRate, StreamConfig};
+use cpal::{BufferSize, StreamConfig};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use opus::{Channels, Decoder};
 
@@ -25,12 +25,12 @@ fn main() -> Result<()> {
 
     let host = cpal::default_host();
     let dev = host.default_output_device().ok_or_else(|| anyhow!("aucune sortie audio"))?;
-    let cfg = StreamConfig { channels: 2, sample_rate: SampleRate(RATE), buffer_size: BufferSize::Default };
+    let cfg = StreamConfig { channels: 2, sample_rate: RATE, buffer_size: BufferSize::Default };
     let (mut prod, mut cons) = rtrb::RingBuffer::<f32>::new(RATE as usize);
     let started = Arc::new(AtomicBool::new(false));
     let st = started.clone();
     let stream = dev.build_output_stream(
-        &cfg,
+        cfg,
         move |out: &mut [f32], _| {
             let mut avail = cons.slots();
             if avail > max_fill {

@@ -15,8 +15,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CMAKE_POLICY_VERSION_MINIMUM: "3.5"
-  LIBOPUS_STATIC: "1"
-  LIBOPUS_NO_PKG: "1"
 
 jobs:
   build:

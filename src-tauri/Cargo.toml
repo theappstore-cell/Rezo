@@ -6,7 +6,7 @@ authors = ["theappstore-cell"]
 license = "GPL-3.0-only"
 repository = "https://github.com/theappstore-cell/Rezo"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.90"
 
 [features]
 default = ["custom-protocol"]
@@ -31,28 +31,28 @@ log = "0.4"
 env_logger = "0.11"
 parking_lot = "0.12"
 
-rtrb = "0.3"
+rtrb = "0.4"
 crossbeam-channel = "0.5"
-opus = "0.3"
+opus = "0.4"
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }
 futures-util = "0.3"
 bytes = "1"
 axum = { version = "0.8", features = ["ws"] }
 reqwest = { version = "0.12", default-features = false }
-socket2 = "0.5"
-if-addrs = "0.13"
-mdns-sd = "0.11"
+socket2 = "0.6"
+if-addrs = "0.15"
+mdns-sd = "0.22"
 
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 base64 = "0.22"
-png = "0.17"
+png = "0.18"
 
 [target.'cfg(not(windows))'.dependencies]
-cpal = "0.15"
+cpal = "0.18"
 
 [target.'cfg(windows)'.dependencies.windows]
-version = "0.58"
+version = "0.62"
 features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",

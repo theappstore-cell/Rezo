@@ -103,7 +103,7 @@ mod imp {
         CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ,
     };
     use windows::Win32::System::Com::StructuredStorage::{PropVariantToStringAlloc, PropVariantToUInt32};
-    use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
+    use windows::Win32::Foundation::PROPERTYKEY;
 
     use crate::audio::sessions::{exe_of_pid, friendly_name, icon_of_exe};
 

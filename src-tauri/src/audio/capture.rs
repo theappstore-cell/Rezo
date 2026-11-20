@@ -124,7 +124,8 @@ mod imp {
     use std::ffi::c_void;
     use std::sync::atomic::AtomicU32;
 
-    use windows::core::{w, Interface, GUID, HRESULT, IUnknown, PROPVARIANT};
+    use windows::core::{w, Interface, GUID, HRESULT, IUnknown};
+    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::Foundation::{CloseHandle, E_NOINTERFACE, E_POINTER, HANDLE, S_OK, WAIT_OBJECT_0};
     use windows::Win32::Media::Audio::*;
     use windows::Win32::System::Com::{
@@ -228,7 +229,7 @@ mod imp {
     unsafe fn default_is_bluetooth() -> bool {
         use windows::Win32::System::Com::StructuredStorage::PropVariantToStringAlloc;
         use windows::Win32::System::Com::STGM_READ;
-        use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
+        use windows::Win32::Foundation::PROPERTYKEY;
         const KEY_ENUMERATOR: PROPERTYKEY =
             PROPERTYKEY { fmtid: GUID::from_u128(0xa45c254e_df1c_4efd_8020_67d146a850e0), pid: 24 };
         let Ok(dev) = default_render() else { return false };
@@ -572,7 +573,7 @@ mod imp {
     fn pick_device(host: &cpal::Host) -> Option<cpal::Device> {
         if let Ok(devices) = host.input_devices() {
             for d in devices {
-                let name = d.name().unwrap_or_default().to_lowercase();
+                let name = d.description().map(|x| x.name().to_lowercase()).unwrap_or_default();
                 if LOOPBACK_HINTS.iter().any(|h| name.contains(h)) {
                     return Some(d);
                 }
@@ -587,11 +588,11 @@ mod imp {
         pusher: Arc<Mutex<Pusher>>,
         failed: Arc<AtomicBool>,
         conv: fn(T) -> f32,
-    ) -> Result<cpal::Stream, cpal::BuildStreamError> {
+    ) -> Result<cpal::Stream, cpal::Error> {
         let channels = config.channels.max(1) as usize;
         let mut stereo: Vec<f32> = Vec::with_capacity(16384);
         device.build_input_stream(
-            config,
+            *config,
             move |data: &[T], _: &cpal::InputCallbackInfo| {
                 stereo.clear();
                 for frame in data.chunks_exact(channels) {
@@ -613,11 +614,11 @@ mod imp {
     fn run_session(pusher: &Arc<Mutex<Pusher>>, stop: &AtomicBool, status: &CaptureStatus) -> anyhow::Result<()> {
         let host = cpal::default_host();
         let device = pick_device(&host).ok_or_else(|| anyhow!("aucun périphérique d'entrée audio"))?;
-        let name = device.name().unwrap_or_default();
+        let name = device.description().map(|x| x.name().to_string()).unwrap_or_default();
         let supported = device.default_input_config()?;
         let format = supported.sample_format();
         let config: cpal::StreamConfig = supported.into();
-        pusher.lock().set_rate(config.sample_rate.0);
+        pusher.lock().set_rate(config.sample_rate);
         let failed = Arc::new(AtomicBool::new(false));
         let stream = match format {
             cpal::SampleFormat::F32 => build::<f32>(&device, &config, pusher.clone(), failed.clone(), |s| s)?,
@@ -629,7 +630,7 @@ mod imp {
         stream.play()?;
         status.running.store(true, Ordering::Release);
         *status.error.lock() = None;
-        log::info!("capture démarrée ({name}, {} Hz, {} ch)", config.sample_rate.0, config.channels);
+        log::info!("capture démarrée ({name}, {} Hz, {} ch)", config.sample_rate, config.channels);
         while !stop.load(Ordering::Acquire) && !failed.load(Ordering::Acquire) {
             thread::sleep(Duration::from_millis(50));
         }
