@@ -97,19 +97,19 @@ A scan takes about 1.2 s and repeats every 30 to 120 s depending on how stable t
 
 ## 6. Lining up several speakers
 
-1. Every Sonos buffers the HTTP stream by its own rules. Rezo sends every `SetAVTransportURI` and then every `Play` in parallel and feeds all streams from the same clock; the remaining gap between two Sonos is usually a few tens of milliseconds, and all of them lag the PC by 1 to 3 s.
-2. Put the PC on Ethernet; on Sonos, wire one speaker (SonosNet) rather than running everything over Wi-Fi.
-3. Play something percussive, listen to two neighbouring rooms and adjust **Sync** on the late speaker with the -1 ms / +1 ms buttons. A negative delay delays every other speaker instead. Values are stored per speaker and in scenes.
-4. Do not mix a Sonos and a native receiver in the same room: aligning them would need 1 to 3 s of delay on the native side, beyond the ±500 ms range.
+1. Press **Sync** in the Console. The active Sonos speakers join one Sonos group, as when grouped in the Sonos app: one of them receives Rezo's stream (or plays its line-in) and the others follow it sample for sample, without drifting apart. Press **Sync** again to split the group; each speaker then gets its own stream back.
+2. Sync also delays the other active speakers (native receivers, browsers) so they play with the slowest one, from per-type estimates: about 300 ms for a Sonos with "Lowest Sonos delay", the computed delay of a native receiver, the reported buffer of a browser. Fine-tune by ear with the **Sync** knob and the -1 ms / +1 ms buttons; a negative delay delays every other speaker instead. Values are stored per speaker and in scenes.
+3. For games, use a Sonos with a line-in (Five, Port, Amp): connect the PC's headphone or line output to it, turn on **Line-in** on its strip, and set its line-in Audio Delay to the lowest value in the Sonos app. Rezo does not process that audio (the mix controls do not apply), and Smart Output stays off since the PC output feeds the cable. Sync groups the other Sonos with it.
+4. Put the PC on Ethernet; on Sonos, wire one speaker rather than running everything over Wi-Fi.
 5. Stereo pairs and home-theater sets are created in the Sonos app; Rezo only shows the main speaker.
-6. A Sonos that belongs to a group is taken out of it when streaming starts (group members refuse `SetAVTransportURI`). Regroup it in the Sonos app afterwards if needed.
+6. A Sonos that belongs to a group made in the Sonos app is taken out of it when streaming starts. Use **Sync** to group speakers from Rezo instead.
 
 ## 7. Troubleshooting
 
 | Problem | Things to check |
 |---|---|
-| No sound on a Sonos, UPnP error 701/714/800 | firewall or network profile: the speaker cannot reach `http://<pc-ip>:49494/stream/…`; open that URL from another device |
-| Sonos stops after a few seconds | look at `rezo.log`: every stream end is logged with its reason |
+| No sound on a Sonos, UPnP error 701/714/800 | firewall or network profile: the speaker cannot reach `http://<pc-ip>:49494/s/<key>/stream/…`; open the browser receiver page from another device to check |
+| Sonos stops after a few seconds | look at `rezo.log`: every stream end is logged with its reason; on a weak Wi-Fi link, turn off "Lowest Sonos delay" |
 | No sound on the PC after a crash | start Rezo again (it restores the output it muted) |
 | PC muted but nothing on the speakers | driver that applies the mute before loopback: turn Smart Output off |
 | Crackles on a native receiver | larger buffer (`--buffer-ms 30`), 5 ms frames, check the Wi-Fi |

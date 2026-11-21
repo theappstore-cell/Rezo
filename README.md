@@ -17,6 +17,9 @@ Rezo sends what your computer is playing to the speakers around your home, all a
   - Native receivers over UDP/RTP with Opus in low-delay mode (`tools/rezo-recv`), for the lowest latency.
   - Any phone or tablet: scan a QR code, the browser becomes a speaker (WebSocket + AudioWorklet).
 - **Per-speaker processing**: gain, 3-band EQ, bass boost, presence, loudness, stereo width, compressor, noise gate, pan, channel mode, phase invert, delay from -500 to +500 ms, limiter.
+- **Speaker volume**: a second fader on each Console strip sets the speaker's own volume (the one the Sonos app shows) or the receiver's output level.
+- **Sync**: one button groups the active Sonos speakers the way the Sonos app does, so they play sample-aligned, and delays the other speakers to play with them.
+- **Sonos line-in**: for games, a Sonos with a line-in (Five, Port, Amp) can play the PC through a cable, the lowest delay a Sonos offers; Sync groups the other Sonos with it.
 - **Rooms and scenes**: group speakers into rooms, save complete mixes and recall them in one click.
 - **Views**: Rooms (compact tray popover), Map (drag speakers between rooms), Console (mixing desk with MIDI Learn).
 - **Audio mixer window**: volume and mute for each PC output (wired, Bluetooth, HDMI, USB) and each application, and switching the default output.
@@ -29,9 +32,11 @@ Rezo sends what your computer is playing to the speakers around your home, all a
 |---|---|
 | Native receiver (Opus over UDP) | 10 to 25 ms |
 | Web browser | 40 to 150 ms, depending on the device |
-| Sonos / UPnP | 1 to 3 s, imposed by the speaker's own buffering |
+| Sonos over the network | about 350 ms (measured with a microphone on a Sonos Play:1, capture to sound) |
+| Sonos line-in (cable from the PC) | set by the line-in Audio Delay option of the Sonos app |
+| Other UPnP renderers | depends on the device, often 1 s or more |
 
-Sonos speakers buffer HTTP streams before playing. Rezo keeps the stream open while a speaker is enabled, so audio starts after that buffer only, without reloading.
+A Sonos keeps a buffer of its own that Rezo cannot remove; "Lowest Sonos delay" (Settings, on by default) keeps Rezo's own share as small as possible. Rezo keeps the stream open while a speaker is enabled, so audio starts after that buffer only, without reloading.
 
 ## Download
 

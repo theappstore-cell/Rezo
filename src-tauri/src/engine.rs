@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -33,6 +33,16 @@ pub struct SpeakerView {
     pub error: Option<String>,
     pub group: Option<String>,
     pub latency_ms: Option<u32>,
+    pub device_volume: Option<u32>,
+    pub synced_to: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncReport {
+    pub grouped: Vec<String>,
+    pub delayed: Vec<(String, u32)>,
+    pub ungrouped: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -80,8 +90,24 @@ pub struct ReceiverInfo {
 }
 
 enum SinkKind {
-    Udp(UdpHandle),
+    Udp(UdpHandle, Arc<AtomicU32>),
     Tap,
+    // Sonos playing its own analog input: no stream from Rezo, and the PC output that feeds the jack must stay on.
+    LineIn,
+    // Sonos grouped by Sync with the speaker of that id: it plays the coordinator's audio, sample-aligned.
+    Follower(String),
+}
+
+enum Prepared {
+    Ready,
+    Http(upnp::Target),
+    LineIn(upnp::Target),
+}
+
+impl SinkKind {
+    fn streams(&self) -> bool {
+        matches!(self, SinkKind::Udp(..) | SinkKind::Tap)
+    }
 }
 
 struct Sink {
@@ -96,7 +122,14 @@ struct Rt {
     error: Option<String>,
     group: Option<String>,
     client_buf_ms: u32,
+    device_volume: Option<u32>,
+    volume_set_at: Option<Instant>,
 }
+
+// Measured with a microphone on a Sonos Play:1 (capture to sound), see PREROLL_LOW_LATENCY.
+const SONOS_LATENCY_LOW_MS: u32 = 300;
+const SONOS_LATENCY_SAFE_MS: u32 = 420;
+const RECEIVER_BUFFER_MS: f32 = 20.0;
 
 pub struct Engine {
     pub store: Arc<Store>,
@@ -128,6 +161,7 @@ pub struct Engine {
     subs: Mutex<HashMap<String, Sub>>,
     stopping: Mutex<HashSet<String>>,
     last_restart: Mutex<HashMap<String, Instant>>,
+    volume_pending: Mutex<HashMap<String, u32>>,
     stats_on: bool,
 }
 
@@ -142,6 +176,22 @@ struct StatsSample {
     busy_ns: u64,
     quiet: u64,
     total: u64,
+}
+
+// Delay for each path so that all of them play with the slowest one (bounded by the delay knob's range).
+fn alignment_delays(latencies: &[u32]) -> Vec<u32> {
+    let slowest = latencies.iter().copied().max().unwrap_or(0);
+    latencies.iter().map(|l| (slowest - l).min(500)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn faster_paths_wait_for_the_slowest() {
+        assert_eq!(super::alignment_delays(&[300, 42, 46]), vec![0, 258, 254]);
+        assert_eq!(super::alignment_delays(&[2000, 40]), vec![0, 500]);
+        assert!(super::alignment_delays(&[]).is_empty());
+    }
 }
 
 fn fnv(s: &str) -> u32 {
@@ -195,6 +245,7 @@ impl Engine {
             subs: Mutex::new(HashMap::new()),
             stopping: Mutex::new(HashSet::new()),
             last_restart: Mutex::new(HashMap::new()),
+            volume_pending: Mutex::new(HashMap::new()),
             stats_on: std::env::var_os("REZO_STATS").is_some(),
         })
     }
@@ -217,7 +268,28 @@ impl Engine {
             tauri::async_runtime::spawn(me.clone().discovery_loop());
             tauri::async_runtime::spawn(me.clone().watchdog_loop());
             tauri::async_runtime::spawn(me.clone().output_guard_loop());
+            tauri::async_runtime::spawn(me.clone().volume_loop());
         });
+    }
+
+    pub fn preroll_chunks(&self) -> u32 {
+        if self.store.read(|c| c.settings.sonos_low_latency) {
+            upnp::PREROLL_LOW_LATENCY
+        } else {
+            upnp::PREROLL_SAFE
+        }
+    }
+
+    fn streaming_sinks(&self) -> bool {
+        self.sinks.lock().values().any(|s| s.kind.streams())
+    }
+
+    fn line_in_active(&self) -> bool {
+        self.sinks.lock().values().any(|s| matches!(s.kind, SinkKind::LineIn))
+    }
+
+    fn tap_sink_ids(&self) -> HashSet<String> {
+        self.sinks.lock().iter().filter(|(_, s)| matches!(s.kind, SinkKind::Tap)).map(|(id, _)| id.clone()).collect()
     }
 
     fn emit<S: Serialize + Clone>(&self, event: &str, payload: S) {
@@ -315,8 +387,28 @@ impl Engine {
         *prev = cur;
     }
 
+    // `via_stream`: false for a Sonos on its line-in or following a group, whose delay Rezo does not know.
+    fn latency_estimate(sp: &Speaker, via_stream: bool, settings: &Settings, client_buf_ms: u32) -> Option<u32> {
+        match sp.protocol {
+            Protocol::Native => {
+                let capture_period = if settings.pin_engine_period { 3.0 } else { 10.0 };
+                Some((capture_period + settings.udp_frame_ms + 2.5 + 4.0 + RECEIVER_BUFFER_MS).round() as u32)
+            }
+            Protocol::Web if client_buf_ms > 0 => Some(client_buf_ms + 15),
+            Protocol::Sonos if via_stream => Some(if settings.sonos_low_latency { SONOS_LATENCY_LOW_MS } else { SONOS_LATENCY_SAFE_MS }),
+            _ => None,
+        }
+    }
+
     pub fn snapshot(&self) -> FullState {
-        let running: HashSet<String> = self.sinks.lock().keys().cloned().collect();
+        let (running, followers, line_ins): (HashSet<String>, HashMap<String, String>, HashSet<String>) = {
+            let sinks = self.sinks.lock();
+            (
+                sinks.keys().cloned().collect(),
+                sinks.iter().filter_map(|(id, s)| match &s.kind { SinkKind::Follower(c) => Some((id.clone(), c.clone())), _ => None }).collect(),
+                sinks.iter().filter(|(_, s)| matches!(s.kind, SinkKind::LineIn)).map(|(id, _)| id.clone()).collect(),
+            )
+        };
         let rt = self.rt.lock().clone();
         let streaming: HashMap<String, bool> =
             self.taps.read().iter().map(|(k, t)| (k.clone(), t.connected.load(Ordering::Relaxed))).collect();
@@ -326,10 +418,6 @@ impl Engine {
         };
 
         self.store.read(|c| {
-            let udp_latency = {
-                let capture_period = if c.settings.pin_engine_period { 3.0 } else { 10.0 };
-                (capture_period + c.settings.udp_frame_ms + 2.5 + 4.0).round() as u32
-            };
             FullState {
                 master_db: c.master_db,
                 source: c.source.clone(),
@@ -340,21 +428,26 @@ impl Engine {
                     .map(|s| {
                         let r = rt.get(&s.id).cloned().unwrap_or_default();
                         let is_running = running.contains(&s.id);
-                        let latency_ms = match s.protocol {
-                            Protocol::Native => Some(udp_latency),
-                            Protocol::Web if r.client_buf_ms > 0 => Some(r.client_buf_ms + 15),
-                            _ => None,
+                        let follows = followers.get(&s.id);
+                        let plays_line_in = line_ins.contains(&s.id);
+                        let latency_ms = Self::latency_estimate(s, follows.is_none() && !plays_line_in && !s.plays_line_in(), &c.settings, r.client_buf_ms);
+                        let device_volume = match s.protocol {
+                            Protocol::Sonos | Protocol::Upnp => r.device_volume,
+                            Protocol::Native | Protocol::Web => Some(s.receiver_volume.min(100)),
                         };
                         SpeakerView {
                             running: is_running,
                             online: r.online,
                             streaming: match s.protocol {
                                 Protocol::Native => is_running,
+                                _ if follows.is_some() || plays_line_in => is_running,
                                 _ => streaming.get(&s.id).copied().unwrap_or(false),
                             },
                             error: r.error,
                             group: r.group,
                             latency_ms,
+                            device_volume,
+                            synced_to: follows.map(|cid| c.speaker(cid).map(|x| x.name.clone()).unwrap_or_else(|| cid.clone())),
                             speaker: s.clone(),
                         }
                     })
@@ -371,7 +464,7 @@ impl Engine {
     }
 
     pub fn restart_capture(&self) {
-        let need = !self.sinks.lock().is_empty();
+        let need = self.streaming_sinks();
         let mut cap = self.capture.lock();
         if let Some(h) = cap.take() {
             h.stop();
@@ -396,7 +489,7 @@ impl Engine {
 
     // No loopback stream while idle: an open stream keeps the output device (and Bluetooth links) awake.
     fn sync_capture(&self) {
-        let need = !self.sinks.lock().is_empty();
+        let need = self.streaming_sinks();
         let mut cap = self.capture.lock();
         if need && cap.is_none() {
             *cap = Some(self.start_capture());
@@ -446,7 +539,8 @@ impl Engine {
     }
 
     fn ensure_delay_capacity(&self) {
-        let delays: Vec<(String, f32)> = self.sinks.lock().iter().map(|(id, s)| (id.clone(), s.shared.delay_ms.load())).collect();
+        let delays: Vec<(String, f32)> =
+            self.sinks.lock().iter().filter(|(_, s)| s.kind.streams()).map(|(id, s)| (id.clone(), s.shared.delay_ms.load())).collect();
         let base = delays.iter().map(|d| d.1).fold(0.0f32, f32::min);
         let step = DEFAULT_DELAY_FRAMES;
         let mut caps = self.delay_caps.lock();
@@ -531,9 +625,9 @@ impl Engine {
         self.taps.read().get(id).map_or(false, |t| Arc::ptr_eq(t, tap))
     }
 
-    fn prepare(&self, id: &str) -> Result<Option<upnp::Target>> {
+    fn prepare(&self, id: &str) -> Result<Prepared> {
         if self.sinks.lock().contains_key(id) {
-            return Ok(None);
+            return Ok(Prepared::Ready);
         }
         let (sp, settings, room) = self.store.read(|c| {
             let sp = c.speaker(id).cloned();
@@ -546,6 +640,12 @@ impl Engine {
             shared.set_room(r.volume_db, r.mute, r.solo);
         }
 
+        if sp.plays_line_in() {
+            let target = self.target_for(&sp)?;
+            self.sinks.lock().insert(id.to_string(), Sink { kind: SinkKind::LineIn, shared });
+            return Ok(Prepared::LineIn(target));
+        }
+
         let mut target = None;
         let (kind, wake, prod) = match sp.protocol {
             Protocol::Native => {
@@ -553,6 +653,7 @@ impl Engine {
                     .parse()
                     .map_err(|_| anyhow!("adresse invalide : {}:{}", sp.address, sp.port))?;
                 let (prod, cons) = rtrb::RingBuffer::new(BLOCK_SAMPLES * 40);
+                let volume = Arc::new(AtomicU32::new(sp.receiver_volume.min(100)));
                 let h = udp_streamer::spawn(
                     cons,
                     UdpConfig {
@@ -561,20 +662,21 @@ impl Engine {
                         bitrate_kbps: settings.bitrate_kbps,
                         redundancy: settings.redundancy,
                         ssrc: fnv(&sp.id),
+                        volume: volume.clone(),
                     },
                 )?;
                 let wake = Some(h.thread.clone());
-                (SinkKind::Udp(h), wake, prod)
+                (SinkKind::Udp(h, volume), wake, prod)
             }
             Protocol::Sonos | Protocol::Upnp => {
                 target = Some(self.target_for(&sp)?);
                 let (prod, cons) = rtrb::RingBuffer::new(BLOCK_SAMPLES * 100);
-                self.taps.write().insert(id.to_string(), Arc::new(PcmTap::new(cons)));
+                self.taps.write().insert(id.to_string(), Arc::new(PcmTap::new(cons, 100)));
                 (SinkKind::Tap, Some(self.pump.clone()), prod)
             }
             Protocol::Web => {
                 let (prod, cons) = rtrb::RingBuffer::new(BLOCK_SAMPLES * 40);
-                self.taps.write().insert(id.to_string(), Arc::new(PcmTap::new(cons)));
+                self.taps.write().insert(id.to_string(), Arc::new(PcmTap::new(cons, sp.receiver_volume)));
                 (SinkKind::Tap, Some(self.pump.clone()), prod)
             }
         };
@@ -584,7 +686,7 @@ impl Engine {
         self.sinks.lock().insert(id.to_string(), Sink { kind, shared });
         self.ensure_delay_capacity();
         self.sync_capture();
-        Ok(target)
+        Ok(target.map_or(Prepared::Ready, Prepared::Http))
     }
 
     fn teardown(&self, id: &str) {
@@ -595,7 +697,7 @@ impl Engine {
         self.subs.lock().remove(id);
         self.ensure_delay_capacity();
         self.router.reap();
-        if let Some(Sink { kind: SinkKind::Udp(h), .. }) = sink {
+        if let Some(Sink { kind: SinkKind::Udp(h, _), .. }) = sink {
             h.stop();
         }
         self.sync_capture();
@@ -626,17 +728,37 @@ impl Engine {
 
     pub async fn activate_many(self: &Arc<Self>, ids: Vec<String>) {
         let mut targets = vec![];
+        let mut line_ins = vec![];
         let mut started = vec![];
         for id in &ids {
             if self.sinks.lock().contains_key(id) {
                 continue;
             }
             match self.prepare(id) {
-                Ok(t) => {
+                Ok(p) => {
                     started.push(id.clone());
-                    targets.extend(t);
+                    match p {
+                        Prepared::Http(t) => targets.push(t),
+                        Prepared::LineIn(t) => line_ins.push(t),
+                        Prepared::Ready => {}
+                    }
                 }
                 Err(e) => self.fail(id, &e.to_string()),
+            }
+        }
+        let http_ids: Vec<String> = targets.iter().map(|t| t.id.clone()).collect();
+        if !line_ins.is_empty() {
+            let me = self;
+            let results = join_all(line_ins.iter().map(|t| async move { (t.id.clone(), upnp::play_line_in(&me.http, t).await) })).await;
+            for (id, r) in results {
+                match r {
+                    Ok(()) => log::info!("{id} : entrée ligne en lecture"),
+                    Err(e) => {
+                        self.teardown(&id);
+                        started.retain(|x| x != &id);
+                        self.fail(&id, &e.to_string());
+                    }
+                }
             }
         }
         if !targets.is_empty() {
@@ -658,10 +780,7 @@ impl Engine {
         for id in &started {
             self.set_error(id, None);
         }
-        let upnp_ids: Vec<String> = {
-            let protos: HashMap<String, Protocol> = self.store.read(|c| c.speakers.iter().map(|s| (s.id.clone(), s.protocol)).collect());
-            started.iter().filter(|id| matches!(protos.get(*id), Some(Protocol::Sonos | Protocol::Upnp))).cloned().collect()
-        };
+        let upnp_ids: Vec<String> = http_ids.into_iter().filter(|id| started.contains(id)).collect();
         let upnp_started = !upnp_ids.is_empty();
         for id in upnp_ids.iter().cloned() {
             self.last_restart.lock().insert(id.clone(), Instant::now());
@@ -694,19 +813,40 @@ impl Engine {
             self.release_output_switch();
             self.notify_changed();
         }
-        let stops: Vec<upnp::Target> = self.store.read(|c| {
-            ids.iter()
-                .filter(|id| running.contains(*id))
-                .filter_map(|id| c.speaker(id))
-                .filter(|s| matches!(s.protocol, Protocol::Sonos | Protocol::Upnp))
-                .filter_map(|s| self.target_for(s).ok())
-                .collect()
+        // Grouped members leave their group instead of stopping it; members of a stopped coordinator that are
+        // still wanted get a stream of their own back.
+        let (leaving, orphans): (Vec<String>, Vec<String>) = {
+            let sinks = self.sinks.lock();
+            let leaving = ids.iter().filter(|id| matches!(sinks.get(*id).map(|s| &s.kind), Some(SinkKind::Follower(_)))).cloned().collect();
+            let orphans = sinks
+                .iter()
+                .filter_map(|(fid, s)| match &s.kind {
+                    SinkKind::Follower(c) if ids.contains(c) && !ids.contains(fid) => Some(fid.clone()),
+                    _ => None,
+                })
+                .collect();
+            (leaving, orphans)
+        };
+        let (stops, leaves): (Vec<upnp::Target>, Vec<upnp::Target>) = self.store.read(|c| {
+            let targets = |list: &mut dyn Iterator<Item = &String>| -> Vec<upnp::Target> {
+                list.filter_map(|id| c.speaker(id))
+                    .filter(|s| matches!(s.protocol, Protocol::Sonos | Protocol::Upnp))
+                    .filter_map(|s| self.target_for(s).ok())
+                    .collect()
+            };
+            let stops = targets(&mut ids.iter().filter(|id| running.contains(*id) && !leaving.contains(*id)));
+            let leaves = targets(&mut leaving.iter().chain(orphans.iter()));
+            (stops, leaves)
         });
         self.stopping.lock().extend(ids.iter().cloned());
         let unsubs: Vec<(upnp::Target, String)> = {
             let mut subs = self.subs.lock();
             stops.iter().filter_map(|t| subs.remove(&t.id).map(|s| (t.clone(), s.sid))).collect()
         };
+        join_all(leaves.iter().map(|t| async move {
+            let _ = tokio::time::timeout(Duration::from_millis(1500), upnp::leave_group(&self.http, t)).await;
+        }))
+        .await;
         join_all(stops.iter().map(|t| async move {
             let _ = tokio::time::timeout(Duration::from_millis(1500), upnp::stop(&self.http, t)).await;
         }))
@@ -716,7 +856,7 @@ impl Engine {
         }))
         .await;
 
-        for id in &ids {
+        for id in ids.iter().chain(orphans.iter()) {
             self.teardown(id);
         }
         {
@@ -732,6 +872,9 @@ impl Engine {
                 }
             }
         });
+        if !orphans.is_empty() {
+            self.activate_many(orphans).await;
+        }
         self.update_output_switch();
         self.notify_changed();
     }
@@ -815,7 +958,7 @@ impl Engine {
     }
 
     pub fn update_output_switch(&self) {
-        let any_active = !self.sinks.lock().is_empty();
+        let any_active = self.streaming_sinks() && !self.line_in_active();
         let want = self.store.read(|c| c.settings.smart_output && !c.local_pc && matches!(c.source, Source::System)) && any_active;
         {
             let _g = self.switch_lock.lock();
@@ -1005,6 +1148,8 @@ impl Engine {
                 sp.address = d.ip.clone();
                 sp.port = d.port;
                 sp.control_url = Some(d.av_control_url.clone());
+                sp.rendering_url = d.rendering_url.clone();
+                sp.line_in = d.line_in;
                 sp.model = d.model.clone();
                 sp.protocol = protocol;
                 moved
@@ -1022,8 +1167,9 @@ impl Engine {
                     uuid: d.is_sonos.then(|| d.udn.clone()),
                     control_url: Some(d.av_control_url.clone()),
                     event_url: d.event_url.clone(),
-                    active: false,
-                    params: ChannelParams::default(),
+                    rendering_url: d.rendering_url.clone(),
+                    line_in: d.line_in,
+                    ..Speaker::default()
                 });
                 true
             }
@@ -1166,7 +1312,8 @@ impl Engine {
     }
 
     pub fn on_transport_event(self: &Arc<Self>, id: &str, state: Option<String>, uri: Option<String>) {
-        if !self.sinks.lock().contains_key(id) || self.stopping.lock().contains(id) {
+        let streamed = matches!(self.sinks.lock().get(id).map(|s| &s.kind), Some(SinkKind::Tap));
+        if !streamed || self.stopping.lock().contains(id) {
             return;
         }
         let stopped = matches!(state.as_deref(), Some("STOPPED" | "PAUSED_PLAYBACK" | "NO_MEDIA_PRESENT"));
@@ -1195,7 +1342,7 @@ impl Engine {
     async fn watchdog_loop(self: Arc<Self>) {
         let mut last_poll: HashMap<String, Instant> = HashMap::new();
         loop {
-            let running = self.running_ids();
+            let running = self.tap_sink_ids();
             let upnp_running: Vec<Speaker> = self.store.read(|c| {
                 c.speakers.iter().filter(|s| running.contains(&s.id) && matches!(s.protocol, Protocol::Sonos | Protocol::Upnp)).cloned().collect()
             });
@@ -1222,7 +1369,7 @@ impl Engine {
                 }
             }
 
-            let running = self.running_ids();
+            let running = self.tap_sink_ids();
             let targets: Vec<upnp::Target> = {
                 let subs = self.subs.lock();
                 self.store.read(|c| {
@@ -1253,6 +1400,219 @@ impl Engine {
                 }
             }
         }
+    }
+
+    pub async fn set_device_volume(self: &Arc<Self>, id: &str, volume: u32) -> Result<()> {
+        let volume = volume.min(100);
+        let protocol = self.store.read(|c| c.speaker(id).map(|s| s.protocol)).ok_or_else(|| anyhow!("enceinte inconnue"))?;
+        match protocol {
+            Protocol::Native | Protocol::Web => {
+                self.store.write(|c| {
+                    if let Some(s) = c.speaker_mut(id) {
+                        s.receiver_volume = volume;
+                    }
+                });
+                if let Some(Sink { kind: SinkKind::Udp(_, v), .. }) = self.sinks.lock().get(id) {
+                    v.store(volume, Ordering::Relaxed);
+                }
+                if let Some(t) = self.tap(id) {
+                    t.volume.store(volume, Ordering::Relaxed);
+                }
+            }
+            Protocol::Sonos | Protocol::Upnp => {
+                {
+                    let mut rt = self.rt.lock();
+                    let e = rt.entry(id.to_string()).or_default();
+                    e.device_volume = Some(volume);
+                    e.volume_set_at = Some(Instant::now());
+                }
+                // While a fader moves only the latest value matters: one request in flight per speaker.
+                if self.volume_pending.lock().insert(id.to_string(), volume).is_none() {
+                    let me = self.clone();
+                    let id = id.to_string();
+                    tauri::async_runtime::spawn(async move { me.flush_volume(id).await });
+                }
+            }
+        }
+        self.notify_changed();
+        Ok(())
+    }
+
+    async fn flush_volume(self: Arc<Self>, id: String) {
+        loop {
+            let Some(v) = self.volume_pending.lock().get(&id).copied() else { return };
+            if let Some(sp) = self.store.read(|c| c.speaker(&id).cloned()) {
+                if let Some(path) = sp.rendering_path() {
+                    if let Err(e) = upnp::set_volume(&self.http, &sp.address, sp.port, &path, v).await {
+                        log::warn!("{id} : réglage du volume impossible ({e})");
+                    }
+                }
+            }
+            let mut pending = self.volume_pending.lock();
+            if pending.get(&id) == Some(&v) {
+                pending.remove(&id);
+                return;
+            }
+        }
+    }
+
+    // Reads the volume of Sonos/UPnP speakers while the window is visible, so changes made in the Sonos app show up.
+    async fn volume_loop(self: Arc<Self>) {
+        loop {
+            if !self.ui_visible.load(Ordering::Acquire) {
+                let woken = self.ui_notify.notified();
+                tokio::pin!(woken);
+                woken.as_mut().enable();
+                if !self.ui_visible.load(Ordering::Acquire) {
+                    woken.await;
+                }
+                continue;
+            }
+            let online = self.online_ids();
+            let busy: HashSet<String> = {
+                let pending = self.volume_pending.lock();
+                let rt = self.rt.lock();
+                rt.iter()
+                    .filter(|(id, e)| pending.contains_key(*id) || e.volume_set_at.map_or(false, |t| t.elapsed() < Duration::from_secs(3)))
+                    .map(|(id, _)| id.clone())
+                    .collect()
+            };
+            let targets: Vec<(String, String, u16, String)> = self.store.read(|c| {
+                c.speakers
+                    .iter()
+                    .filter(|s| matches!(s.protocol, Protocol::Sonos | Protocol::Upnp) && online.contains(&s.id) && !busy.contains(&s.id))
+                    .filter_map(|s| s.rendering_path().map(|p| (s.id.clone(), s.address.clone(), s.port, p)))
+                    .collect()
+            });
+            let me = &self;
+            let results = join_all(targets.iter().map(|(id, ip, port, path)| async move {
+                (id.clone(), tokio::time::timeout(Duration::from_millis(1500), upnp::get_volume(&me.http, ip, *port, path)).await)
+            }))
+            .await;
+            let mut changed = false;
+            {
+                let mut rt = self.rt.lock();
+                for (id, r) in results {
+                    let e = rt.entry(id).or_default();
+                    if e.volume_set_at.map_or(false, |t| t.elapsed() < Duration::from_secs(3)) {
+                        continue;
+                    }
+                    if let Ok(Ok(v)) = r {
+                        if e.device_volume != Some(v) {
+                            e.device_volume = Some(v);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if changed {
+                self.notify_changed();
+            }
+            let _ = tokio::time::timeout(Duration::from_secs(4), self.ui_notify.notified()).await;
+        }
+    }
+
+    pub async fn set_use_line_in(self: &Arc<Self>, id: &str, on: bool) -> Result<()> {
+        self.store.write(|c| -> Result<()> {
+            let sp = c.speaker_mut(id).ok_or_else(|| anyhow!("enceinte inconnue"))?;
+            if on && !(sp.protocol == Protocol::Sonos && sp.line_in) {
+                bail!("cette enceinte n'a pas d'entrée ligne");
+            }
+            sp.use_line_in = on;
+            Ok(())
+        })?;
+        if self.sinks.lock().contains_key(id) {
+            self.deactivate_many(vec![id.to_string()]).await;
+            self.activate_many(vec![id.to_string()]).await;
+        }
+        self.notify_changed();
+        Ok(())
+    }
+
+    // First press: active Sonos players join one Sonos group (the player keeps them sample-aligned, as when
+    // grouped in the Sonos app) and the other speakers are delayed to the slowest path with per-type estimates.
+    // Second press, while a group exists: every member gets its own stream back.
+    pub async fn sync_speakers(self: &Arc<Self>) -> SyncReport {
+        let mut report = SyncReport { grouped: vec![], delayed: vec![], ungrouped: vec![] };
+        let followers: Vec<String> =
+            self.sinks.lock().iter().filter(|(_, s)| matches!(s.kind, SinkKind::Follower(_))).map(|(id, _)| id.clone()).collect();
+        if !followers.is_empty() {
+            let (targets, names): (Vec<upnp::Target>, Vec<String>) = self.store.read(|c| {
+                let sps: Vec<&Speaker> = followers.iter().filter_map(|id| c.speaker(id)).collect();
+                (sps.iter().filter_map(|s| self.target_for(s).ok()).collect(), sps.iter().map(|s| s.name.clone()).collect())
+            });
+            join_all(targets.iter().map(|t| async move {
+                let _ = tokio::time::timeout(Duration::from_millis(1500), upnp::leave_group(&self.http, t)).await;
+            }))
+            .await;
+            for id in &followers {
+                self.teardown(id);
+            }
+            self.activate_many(followers).await;
+            report.ungrouped = names;
+            log::info!("Sync : groupe Sonos dissous");
+            self.notify_changed();
+            return report;
+        }
+
+        let kinds: HashMap<String, bool> = self.sinks.lock().iter().map(|(id, s)| (id.clone(), s.kind.streams())).collect();
+        let sonos: Vec<Speaker> = self.store.read(|c| {
+            c.speakers.iter().filter(|s| s.protocol == Protocol::Sonos && s.uuid.is_some() && kinds.contains_key(&s.id)).cloned().collect()
+        });
+        if sonos.len() >= 2 {
+            let coord = sonos.iter().find(|s| s.plays_line_in()).or_else(|| sonos.iter().find(|s| s.line_in)).unwrap_or(&sonos[0]).clone();
+            let coord_uuid = coord.uuid.clone().unwrap_or_default();
+            for m in sonos.iter().filter(|s| s.id != coord.id) {
+                let Ok(t) = self.target_for(m) else { continue };
+                let sub = self.subs.lock().remove(&m.id);
+                if let Some(sub) = sub {
+                    let _ = tokio::time::timeout(Duration::from_millis(1000), upnp::unsubscribe(&self.http, &t, &sub.sid)).await;
+                }
+                self.teardown(&m.id);
+                match upnp::join_group(&self.http, &t, &coord_uuid).await {
+                    Ok(()) => {
+                        let shared = ChannelShared::new(&m.params);
+                        self.sinks.lock().insert(m.id.clone(), Sink { kind: SinkKind::Follower(coord.id.clone()), shared });
+                        report.grouped.push(m.name.clone());
+                    }
+                    Err(e) => {
+                        log::warn!("Sync : {} n'a pas pu rejoindre {} ({e})", m.name, coord.name);
+                        self.activate_many(vec![m.id.clone()]).await;
+                    }
+                }
+            }
+            if !report.grouped.is_empty() {
+                report.grouped.insert(0, coord.name.clone());
+                log::info!("Sync : groupe Sonos {}", report.grouped.join(" + "));
+            }
+        }
+
+        let kinds: HashMap<String, bool> = self.sinks.lock().iter().map(|(id, s)| (id.clone(), s.kind.streams())).collect();
+        let rt = self.rt.lock().clone();
+        let estimates: Vec<(String, String, f32, u32)> = self.store.read(|c| {
+            c.speakers
+                .iter()
+                .filter(|s| kinds.get(&s.id).copied().unwrap_or(false))
+                .filter_map(|s| {
+                    let buf = rt.get(&s.id).map_or(0, |r| r.client_buf_ms);
+                    Self::latency_estimate(s, true, &c.settings, buf).map(|l| (s.id.clone(), s.name.clone(), s.params.delay_ms, l))
+                })
+                .collect()
+        });
+        if estimates.len() >= 2 {
+            let latencies: Vec<u32> = estimates.iter().map(|e| e.3).collect();
+            for ((id, name, current, _), d) in estimates.into_iter().zip(alignment_delays(&latencies)) {
+                if (current - d as f32).abs() > 0.5 {
+                    let _ = self.set_param(&id, "delayMs", &serde_json::json!(d));
+                }
+                if d > 0 {
+                    report.delayed.push((name, d));
+                }
+            }
+        }
+        self.update_output_switch();
+        self.notify_changed();
+        report
     }
 
     pub fn rename_speaker(&self, id: &str, name: &str) {

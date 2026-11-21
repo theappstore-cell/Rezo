@@ -343,6 +343,9 @@ export function SettingsModal() {
         {isWindows && <Row title={t('Période audio basse latence')} hint={t('Pendant les envois seulement : cale le moteur audio Windows à ~3 ms au lieu de 10 ms (enceintes natives). Change la période pour toutes les applications de cette sortie ; jamais appliqué sur une sortie Bluetooth. Désactivé par défaut.')}>
           <Toggle on={set.pinEnginePeriod} label={t('Période audio basse latence')} onChange={(v) => void update({ pinEnginePeriod: v })} />
         </Row>}
+        <Row title={t('Latence Sonos minimale')} hint={t("Le flux Sonos démarre avec 50 ms d'avance au lieu de 200 ms : environ 120 ms de retard en moins (mesuré au micro : 300 ms au lieu de 420 ms). Désactivez si une Sonos en Wi-Fi coupe le son.")}>
+          <Toggle on={set.sonosLowLatency} label={t('Latence Sonos minimale')} onChange={(v) => void update({ sonosLowLatency: v })} />
+        </Row>
         <Row title={t('Trame Opus (UDP natif)')} hint={t('2,5 ms = latence minimale, 5 ms = plus robuste Wi-Fi.')}>
           <select className="rounded-[2px] border border-line bg-inset px-2 py-1.5 text-[12px]" value={set.udpFrameMs} onChange={(e) => void update({ udpFrameMs: Number(e.target.value) })}>
             <option value={2.5}>{t('2,5 ms')}</option>

@@ -160,6 +160,10 @@ pub struct Speaker {
     pub uuid: Option<String>,
     pub control_url: Option<String>,
     pub event_url: Option<String>,
+    pub rendering_url: Option<String>,
+    pub line_in: bool,
+    pub use_line_in: bool,
+    pub receiver_volume: u32,
     pub active: bool,
     pub params: ChannelParams,
 }
@@ -177,9 +181,24 @@ impl Default for Speaker {
             uuid: None,
             control_url: None,
             event_url: None,
+            rendering_url: None,
+            line_in: false,
+            use_line_in: false,
+            receiver_volume: 100,
             active: false,
             params: ChannelParams::default(),
         }
+    }
+}
+
+impl Speaker {
+    // Sonos players expose RenderingControl at a fixed path; other renderers only through their description.
+    pub fn rendering_path(&self) -> Option<String> {
+        self.rendering_url.clone().or_else(|| (self.protocol == Protocol::Sonos).then(|| "/MediaRenderer/RenderingControl/Control".into()))
+    }
+
+    pub fn plays_line_in(&self) -> bool {
+        self.protocol == Protocol::Sonos && self.line_in && self.use_line_in && self.uuid.is_some()
     }
 }
 
@@ -260,6 +279,7 @@ pub struct Settings {
     pub keep_ui_alive: bool,
     pub http_port: u16,
     pub language: String,
+    pub sonos_low_latency: bool,
 }
 
 impl Default for Settings {
@@ -273,6 +293,7 @@ impl Default for Settings {
             keep_ui_alive: false,
             http_port: 49494,
             language: String::new(),
+            sonos_low_latency: true,
         }
     }
 }

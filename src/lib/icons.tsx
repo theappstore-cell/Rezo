@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { Protocol, Speaker as Spk } from './types';
+import { t } from './i18n';
 
 export const ROOM_ICONS: Record<string, LucideIcon> = {
   Sofa, CookingPot, Monitor, BedDouble, TreePalm, Speaker, Music2, Bath, Dumbbell, Gamepad2, Car, Baby, Warehouse, Armchair,
@@ -25,7 +26,10 @@ export function protocolIcon(p: Protocol): LucideIcon {
 
 export function protocolBadge(sp: Spk): string {
   switch (sp.protocol) {
-    case 'sonos': return 'Sonos UPnP';
+    case 'sonos':
+      if (sp.syncedTo) return t('Sonos groupée');
+      if (sp.useLineIn && sp.lineIn) return t('Sonos entrée ligne');
+      return sp.latencyMs ? `Sonos ~${sp.latencyMs}ms` : 'Sonos UPnP';
     case 'upnp': return 'UPnP/DLNA';
     case 'native': return sp.latencyMs ? `UDP ${sp.latencyMs}ms` : 'UDP';
     case 'web': return sp.latencyMs ? `Web ${sp.latencyMs}ms` : 'Web';

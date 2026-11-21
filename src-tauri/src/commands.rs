@@ -5,7 +5,7 @@ use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::audio::sessions::AudioApp;
-use crate::engine::{Engine, FullState, ReceiverInfo};
+use crate::engine::{Engine, FullState, ReceiverInfo, SyncReport};
 use crate::state::rooms::{MidiBinding, Settings, Source};
 use crate::ui;
 
@@ -64,6 +64,33 @@ pub async fn set_room_send(engine: Eng<'_>, id: String, on: bool) -> Res<FullSta
     let e = engine.inner().clone();
     e.set_room_send(&id, on).await;
     Ok(e.snapshot())
+}
+
+#[tauri::command]
+pub async fn set_device_volume(engine: Eng<'_>, id: String, volume: u32) -> Res<()> {
+    let e = engine.inner().clone();
+    e.set_device_volume(&id, volume).await.map_err(e2s)
+}
+
+#[tauri::command]
+pub async fn set_use_line_in(engine: Eng<'_>, id: String, on: bool) -> Res<FullState> {
+    let e = engine.inner().clone();
+    e.set_use_line_in(&id, on).await.map_err(e2s)?;
+    Ok(e.snapshot())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncReply {
+    report: SyncReport,
+    state: FullState,
+}
+
+#[tauri::command]
+pub async fn sync_speakers(engine: Eng<'_>) -> Res<SyncReply> {
+    let e = engine.inner().clone();
+    let report = e.sync_speakers().await;
+    Ok(SyncReply { report, state: e.snapshot() })
 }
 
 #[tauri::command]

@@ -1,18 +1,22 @@
 import { memo, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { Volume2 } from 'lucide-react';
 import { clamp, fmtDb, fmtMs, fmtPan } from '../lib/db';
 import { protocolBadge } from '../lib/icons';
 import { useStore } from '../lib/store';
 import { t } from '../lib/i18n';
 import type { Room, Speaker } from '../lib/types';
 import { ChannelFader } from './ChannelFader';
+import { DeviceFader } from './DeviceFader';
 import { FxButton } from './FxPanel';
 import { NudgeButton, Pad } from './Pad';
 import { RotaryKnob } from './RotaryKnob';
 
 const NEUTRAL = '#9a9a93';
 
-function FaderBay({ valueDb, ...rest }: { valueDb: number } & Omit<React.ComponentProps<typeof ChannelFader>, 'height' | 'valueDb'>) {
+type DeviceProps = Omit<React.ComponentProps<typeof DeviceFader>, 'height'>;
+
+function FaderBay({ valueDb, device, ...rest }: { valueDb: number; device?: DeviceProps } & Omit<React.ComponentProps<typeof ChannelFader>, 'height' | 'valueDb'>) {
   const ref = useRef<HTMLDivElement>(null);
   const [h, setH] = useState(190);
   useLayoutEffect(() => {
@@ -25,11 +29,20 @@ function FaderBay({ valueDb, ...rest }: { valueDb: number } & Omit<React.Compone
   return (
     <div className="flex min-h-[130px] flex-1 flex-col items-center gap-1.5">
       <div ref={ref} className="relative min-h-0 w-full flex-1">
-        <div className="absolute inset-0 flex justify-center">
+        <div className="absolute inset-0 flex justify-center gap-2">
           <ChannelFader valueDb={valueDb} height={h} {...rest} />
+          {device && <DeviceFader height={h} {...device} />}
         </div>
       </div>
-      <div className="lcd w-full">{fmtDb(valueDb)} dB</div>
+      <div className="flex w-full gap-1">
+        <div className="lcd min-w-0 flex-1">{fmtDb(valueDb)} dB</div>
+        {device && (
+          <div className="lcd flex w-[44px] shrink-0 items-center justify-center gap-0.5" title={device.label}>
+            <Volume2 size={10} aria-hidden />
+            {device.value}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -49,20 +62,27 @@ function Shell({ color, name, sub, width = 112, children }: { color: string; nam
 export const SpeakerStrip = memo(function SpeakerStrip({ sp, room }: { sp: Speaker; room?: Room }) {
   const setParam = useStore((s) => s.setParam);
   const setSend = useStore((s) => s.setSend);
+  const setDeviceVolume = useStore((s) => s.setDeviceVolume);
+  const setUseLineIn = useStore((s) => s.setUseLineIn);
   const color = room?.color ?? NEUTRAL;
   const p = sp.params;
   const id = `ch:${sp.id}`;
   const off = !sp.online;
   const state = sp.streaming ? 'var(--c-ok)' : off ? 'var(--c-bad)' : 'var(--c-border-strong)';
+  // A grouped member or a Sonos on its line-in does not get Rezo's processed stream: the mix controls do nothing.
+  const bypassed = !!sp.syncedTo || (!!sp.useLineIn && !!sp.lineIn);
+  const hasDevice = sp.deviceVolume !== null && sp.deviceVolume !== undefined;
+  const isNetwork = sp.protocol === 'sonos' || sp.protocol === 'upnp';
 
   return (
-    <Shell color={color} name={sp.name} sub={room?.name ?? t('Sans pièce')}>
+    <Shell color={color} name={sp.name} sub={room?.name ?? t('Sans pièce')} width={hasDevice ? 140 : 112}>
       <div className="flex items-center gap-1.5">
         <span className="inline-block h-[8px] w-[8px] rounded-full" style={{ background: state }} title={sp.streaming ? t('Reçoit le flux') : off ? t('Hors ligne') : t('En attente')} />
         <span className="legend truncate">{protocolBadge(sp)}</span>
       </div>
+      {sp.syncedTo && <div className="legend truncate !text-[11px] text-ok" title={t('Joue le son de {name}, synchronisé par la Sonos', { name: sp.syncedTo })}>{t('Groupée avec {name}', { name: sp.syncedTo })}</div>}
 
-      <div className="grid grid-cols-2 gap-x-1 gap-y-2" style={{ opacity: off ? 0.55 : 1 }}>
+      <div className="grid grid-cols-2 gap-x-1 gap-y-2" style={{ opacity: off || bypassed ? 0.55 : 1 }}>
         <RotaryKnob label="Gain" value={p.gainDb} min={-12} max={12} defaultValue={0} step={0.5} fineStep={0.1} bipolar color={color}
           format={(v) => fmtDb(v)} onChange={(v) => setParam(sp.id, 'gainDb', v)} controlId={`${id}:gainDb`} size={40} />
         <RotaryKnob label="Pan" value={p.pan} min={-1} max={1} defaultValue={0} step={0.05} fineStep={0.01} bipolar color={color}
@@ -84,8 +104,12 @@ export const SpeakerStrip = memo(function SpeakerStrip({ sp, room }: { sp: Speak
       <FxButton sp={sp} color={color} />
 
       <div className="grid grid-cols-2 gap-1">
-        <Pad className="col-span-2" label={t('Envoi')} color="var(--c-ok)" on={sp.active} onToggle={() => void setSend(sp.id, !sp.active)}
+        <Pad className={sp.lineIn ? '' : 'col-span-2'} label={t('Envoi')} color="var(--c-ok)" on={sp.active} onToggle={() => void setSend(sp.id, !sp.active)}
           title={t('Envoyer le son vers cette enceinte')} controlId={`${id}:send`} disabled={off && !sp.active} />
+        {sp.lineIn && (
+          <Pad label={t('Ligne')} color="var(--c-warn)" on={!!sp.useLineIn} onToggle={() => void setUseLineIn(sp.id, !sp.useLineIn)} controlId={`${id}:lineIn`}
+            title={t("Entrée ligne de la Sonos, latence minimale : reliez la sortie casque/ligne du PC à la prise jack de l'enceinte. Rezo ne traite pas ce son (le mix ne s'applique pas).")} />
+        )}
         <Pad label="Mute" color="var(--c-bad)" on={p.mute} onToggle={() => setParam(sp.id, 'mute', !p.mute)} controlId={`${id}:mute`} />
         <Pad label="Solo" color="var(--c-warn)" on={p.solo} onToggle={() => setParam(sp.id, 'solo', !p.solo)} controlId={`${id}:solo`} />
         <Pad label="Mono" on={p.mode === 'mono'} onToggle={() => setParam(sp.id, 'mode', p.mode === 'mono' ? 'stereo' : 'mono')} controlId={`${id}:mono`} />
@@ -93,7 +117,14 @@ export const SpeakerStrip = memo(function SpeakerStrip({ sp, room }: { sp: Speak
       </div>
 
       <FaderBay valueDb={p.volumeDb} onChange={(v) => setParam(sp.id, 'volumeDb', v)} color={color}
-        meter={sp.id} controlId={`${id}:volumeDb`} dimmed={p.mute} />
+        meter={sp.id} controlId={`${id}:volumeDb`} dimmed={p.mute || bypassed}
+        device={hasDevice ? {
+          value: sp.deviceVolume!,
+          onChange: (v: number) => setDeviceVolume(sp.id, v),
+          color,
+          label: isNetwork ? t("Volume de l'enceinte (le même que dans l'app Sonos)") : t('Volume du récepteur'),
+          controlId: `${id}:deviceVolume`,
+        } : undefined} />
     </Shell>
   );
 });

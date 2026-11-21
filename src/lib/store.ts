@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { api, on } from './api';
 import { loadMidiMap } from './midi';
 import { pushMeters } from './meterBus';
+import { t } from './i18n';
 import type { ChannelParams, FullState, Meters, Room, Source, Speaker, ViewId } from './types';
 
 const pending = new Map<string, () => Promise<unknown>>();
@@ -40,6 +41,9 @@ interface Store {
   setSource: (src: Source) => void;
   setSend: (id: string, on: boolean) => Promise<void>;
   setRoomSend: (id: string, on: boolean) => Promise<void>;
+  setDeviceVolume: (id: string, volume: number) => void;
+  setUseLineIn: (id: string, on: boolean) => Promise<void>;
+  sync: () => Promise<void>;
   applyScene: (id: string) => Promise<void>;
   scan: () => Promise<void>;
   moveSpeaker: (id: string, roomId: string) => void;
@@ -79,7 +83,7 @@ export const useStore = create<Store>((set, get) => {
         masterDb: cur.masterDb,
         speakers: next.speakers.map((sp) => {
           const old = cur.speakers.find((x) => x.id === sp.id);
-          return old ? { ...sp, params: old.params } : sp;
+          return old ? { ...sp, params: old.params, deviceVolume: old.deviceVolume, receiverVolume: old.receiverVolume } : sp;
         }),
         rooms: next.rooms.map((r) => {
           const o = cur.rooms.find((x) => x.id === r.id);
@@ -146,6 +150,35 @@ export const useStore = create<Store>((set, get) => {
   async setRoomSend(id, on) {
     try {
       get().apply(await api.setRoomSend(id, on));
+    } catch (e) {
+      get().say(String(e));
+    }
+  },
+
+  setDeviceVolume(id, volume) {
+    touch();
+    upd((s) => ({ ...s, speakers: s.speakers.map((sp) => (sp.id === id ? { ...sp, deviceVolume: volume, receiverVolume: volume } : sp)) }));
+    enqueue(`v:${id}`, () => api.setDeviceVolume(id, volume));
+  },
+
+  async setUseLineIn(id, on) {
+    upd((s) => ({ ...s, speakers: s.speakers.map((sp) => (sp.id === id ? { ...sp, useLineIn: on } : sp)) }));
+    try {
+      get().apply(await api.setUseLineIn(id, on));
+    } catch (e) {
+      get().say(String(e));
+    }
+  },
+
+  async sync() {
+    try {
+      const { report, state } = await api.syncSpeakers();
+      get().apply(state);
+      const parts: string[] = [];
+      if (report.ungrouped.length) parts.push(t('Groupe Sonos dissous : {list}', { list: report.ungrouped.join(', ') }));
+      if (report.grouped.length) parts.push(t('Groupe Sonos : {list}', { list: report.grouped.join(' + ') }));
+      if (report.delayed.length) parts.push(report.delayed.map(([n, d]) => t('{name} retardée de {ms} ms', { name: n, ms: d })).join(', '));
+      get().say(parts.length ? parts.join(' · ') : t('Rien à synchroniser : activez au moins deux enceintes.'));
     } catch (e) {
       get().say(String(e));
     }

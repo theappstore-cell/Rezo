@@ -104,7 +104,13 @@
     status(L.connecting);
     ws.onopen = () => { retry = 0; document.body.classList.add('live'); status(L.connected); };
     ws.onmessage = (e) => {
-      if (typeof e.data === 'string') return;
+      if (typeof e.data === 'string') {
+        try {
+          const m = JSON.parse(e.data);
+          if (m.t === 'vol') { $('vol').value = m.v; if (gain) gain.gain.value = m.v / 100; }
+        } catch {}
+        return;
+      }
       if (ctx.state === 'suspended') ctx.resume();
       node.port.postMessage(e.data, [e.data]);
     };

@@ -86,6 +86,7 @@ async fn session(engine: Arc<Engine>, q: WsQuery, socket: WebSocket) {
     });
 
     let mut cur: Option<(Arc<PcmTap>, u64)> = None;
+    let mut sent_volume: Option<u32> = None;
     let mut scratch: Vec<f32> = Vec::with_capacity(CHUNK_SAMPLES);
     let mut bytes = BytesMut::with_capacity(CHUNK_SAMPLES * 2 * 8);
 
@@ -111,6 +112,15 @@ async fn session(engine: Arc<Engine>, q: WsQuery, socket: WebSocket) {
         if tap.gen.load(Ordering::Acquire) != *my_gen {
             reason = "session plus récente";
             break;
+        }
+        let volume = tap.volume.load(Ordering::Relaxed);
+        if sent_volume != Some(volume) {
+            let msg = serde_json::json!({ "t": "vol", "v": volume }).to_string();
+            if tx.send(Message::Text(msg.into())).await.is_err() {
+                reason = "envoi impossible";
+                break;
+            }
+            sent_volume = Some(volume);
         }
 
         let avail = tap.available();

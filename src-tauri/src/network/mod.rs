@@ -15,15 +15,21 @@ pub struct PcmTap {
     pub connected: AtomicBool,
     pub client_buf_ms: AtomicU32,
     pub gen: AtomicU64,
+    // Receiver-side volume (0-100) for browser receivers.
+    pub volume: AtomicU32,
+    // Highest byte offset of the HTTP stream served so far: a Range request beyond it is a probe, not a resume.
+    pub position: AtomicU64,
 }
 
 impl PcmTap {
-    pub fn new(cons: Consumer<f32>) -> Self {
+    pub fn new(cons: Consumer<f32>, volume: u32) -> Self {
         Self {
             cons: Mutex::new(cons),
             connected: AtomicBool::new(false),
             client_buf_ms: AtomicU32::new(0),
             gen: AtomicU64::new(0),
+            volume: AtomicU32::new(volume.min(100)),
+            position: AtomicU64::new(0),
         }
     }
 

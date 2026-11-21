@@ -1,5 +1,5 @@
 use std::net::UdpSocket;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -29,6 +29,10 @@ fn main() -> Result<()> {
     let (mut prod, mut cons) = rtrb::RingBuffer::<f32>::new(RATE as usize);
     let started = Arc::new(AtomicBool::new(false));
     let st = started.clone();
+    // Output volume set from Rezo (RZVL packets), ramped over one buffer to avoid clicks.
+    let volume = Arc::new(AtomicU32::new(100));
+    let vol = volume.clone();
+    let mut gain = 1.0f32;
     let stream = dev.build_output_stream(
         &cfg,
         move |out: &mut [f32], _| {
@@ -63,6 +67,16 @@ fn main() -> Result<()> {
                 out[..a.len()].copy_from_slice(a);
                 out[a.len()..].copy_from_slice(b);
                 c.commit_all();
+            }
+            let target_gain = vol.load(Ordering::Relaxed).min(100) as f32 / 100.0;
+            if gain != 1.0 || target_gain != 1.0 {
+                let step = (target_gain - gain) / (out.len() / 2).max(1) as f32;
+                for f in out.chunks_exact_mut(2) {
+                    gain += step;
+                    f[0] *= gain;
+                    f[1] *= gain;
+                }
+                gain = target_gain;
             }
         },
         |e| eprintln!("erreur audio : {e}"),
@@ -101,6 +115,10 @@ fn main() -> Result<()> {
 
     loop {
         let (n, peer) = sock.recv_from(&mut buf)?;
+        if n >= 6 && &buf[..4] == b"RZVL" {
+            volume.store(u16::from_be_bytes([buf[4], buf[5]]).min(100) as u32, Ordering::Relaxed);
+            continue;
+        }
         if n < 12 || buf[0] >> 6 != 2 {
             continue;
         }

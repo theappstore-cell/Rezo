@@ -23,8 +23,12 @@ const ST_ZONEPLAYER: &str = "urn:schemas-upnp-org:device:ZonePlayer:1";
 const ST_RENDERER: &str = "urn:schemas-upnp-org:device:MediaRenderer:1";
 const AVT: &str = "urn:schemas-upnp-org:service:AVTransport:1";
 const ZGT: &str = "urn:schemas-upnp-org:service:ZoneGroupTopology:1";
+const RC: &str = "urn:schemas-upnp-org:service:RenderingControl:1";
 
-const PREROLL_CHUNKS: u32 = 40;
+// Silence sent ahead of live audio, in 5 ms chunks. Measured on a Sonos with a microphone: 200 ms of pre-roll
+// gives 420 ms from capture to sound, 50 ms gives 300 ms; below that the player waits for its own minimum.
+pub const PREROLL_LOW_LATENCY: u32 = 10;
+pub const PREROLL_SAFE: u32 = 40;
 const WAV_CHUNK_SAMPLES: usize = 1920;
 
 #[derive(Clone, Debug)]
@@ -38,6 +42,8 @@ pub struct DeviceInfo {
     pub is_sonos: bool,
     pub av_control_url: String,
     pub event_url: Option<String>,
+    pub rendering_url: Option<String>,
+    pub line_in: bool,
 }
 
 fn ssdp_socket(iface: Ipv4Addr) -> Result<UdpSocket> {
@@ -99,12 +105,33 @@ pub async fn ssdp_locations(window: Duration, ifaces: Vec<Ipv4Addr>) -> Vec<(Str
     join_all(tasks).await.into_iter().flatten().collect()
 }
 
+// Service URLs may be relative to the description (`AVTransport/control`), to its URLBase, or absolute: keep the
+// path the device expects on its own host and port.
+fn resolve_path(base: &reqwest::Url, u: Option<String>) -> Option<String> {
+    let joined = base.join(u?.trim()).ok()?;
+    let mut p = joined.path().to_string();
+    if let Some(q) = joined.query() {
+        p.push('?');
+        p.push_str(q);
+    }
+    Some(p)
+}
+
+fn rooted(path: &str) -> String {
+    if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    }
+}
+
 pub async fn describe(client: &reqwest::Client, location: &str) -> Result<DeviceInfo> {
     let url = reqwest::Url::parse(location)?;
     let ip = url.host_str().ok_or_else(|| anyhow!("LOCATION sans hôte"))?.to_string();
     let port = url.port().unwrap_or(80);
     let body = client.get(location).send().await?.error_for_status()?.text().await?;
-    let av = xml::service_control_url(&body, "AVTransport").ok_or_else(|| anyhow!("pas de service AVTransport"))?;
+    let base = xml::tag_text(&body, "URLBase").and_then(|b| reqwest::Url::parse(&b).ok()).unwrap_or_else(|| url.clone());
+    let av = resolve_path(&base, xml::service_control_url(&body, "AVTransport")).ok_or_else(|| anyhow!("pas de service AVTransport"))?;
     let manufacturer = xml::tag_text(&body, "manufacturer").unwrap_or_default();
     let is_sonos = manufacturer.to_lowercase().contains("sonos") || body.contains(ST_ZONEPLAYER);
     let udn = xml::tag_text(&body, "UDN").ok_or_else(|| anyhow!("pas d'UDN"))?;
@@ -117,7 +144,9 @@ pub async fn describe(client: &reqwest::Client, location: &str) -> Result<Device
         model: xml::tag_text(&body, "modelName"),
         is_sonos,
         av_control_url: av,
-        event_url: xml::service_event_url(&body, "AVTransport"),
+        event_url: resolve_path(&base, xml::service_event_url(&body, "AVTransport")),
+        rendering_url: resolve_path(&base, xml::service_control_url(&body, "service:RenderingControl:")),
+        line_in: is_sonos && body.contains("service:AudioIn:"),
     })
 }
 
@@ -179,7 +208,7 @@ pub async fn soap(
     let body = format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{service}\">{inner}</u:{action}></s:Body></s:Envelope>"
     );
-    let url = format!("http://{ip}:{port}{path}");
+    let url = format!("http://{ip}:{port}{}", rooted(path));
     let resp = client
         .post(&url)
         .header("Content-Type", "text/xml; charset=\"utf-8\"")
@@ -345,10 +374,48 @@ pub async fn ensure_playing(client: &reqwest::Client, t: &Target) -> Result<bool
     Ok(true)
 }
 
+pub fn line_in_uri(uuid: &str) -> String {
+    format!("x-rincon-stream:{uuid}")
+}
+
+pub fn group_uri(coordinator_uuid: &str) -> String {
+    format!("x-rincon:{coordinator_uuid}")
+}
+
+// The player plays its own analog input: no HTTP buffer in the path, the lowest delay a Sonos offers.
+pub async fn play_line_in(client: &reqwest::Client, t: &Target) -> Result<()> {
+    let uuid = t.uuid.as_deref().ok_or_else(|| anyhow!("UUID Sonos inconnu"))?;
+    let _ = av(client, t, "BecomeCoordinatorOfStandaloneGroup", &[("InstanceID", "0")]).await;
+    av(client, t, "SetAVTransportURI", &[("InstanceID", "0"), ("CurrentURI", &line_in_uri(uuid)), ("CurrentURIMetaData", "")]).await?;
+    play(client, t).await
+}
+
+// A member follows its coordinator sample for sample, like a group made in the Sonos app.
+pub async fn join_group(client: &reqwest::Client, member: &Target, coordinator_uuid: &str) -> Result<()> {
+    av(client, member, "SetAVTransportURI", &[("InstanceID", "0"), ("CurrentURI", &group_uri(coordinator_uuid)), ("CurrentURIMetaData", "")]).await?;
+    Ok(())
+}
+
+pub async fn leave_group(client: &reqwest::Client, member: &Target) -> Result<()> {
+    av(client, member, "BecomeCoordinatorOfStandaloneGroup", &[("InstanceID", "0")]).await?;
+    Ok(())
+}
+
+pub async fn get_volume(client: &reqwest::Client, ip: &str, port: u16, path: &str) -> Result<u32> {
+    let body = soap(client, ip, port, path, RC, "GetVolume", &[("InstanceID", "0"), ("Channel", "Master")]).await?;
+    xml::tag_text(&body, "CurrentVolume").and_then(|v| v.parse().ok()).ok_or_else(|| anyhow!("volume illisible"))
+}
+
+pub async fn set_volume(client: &reqwest::Client, ip: &str, port: u16, path: &str, volume: u32) -> Result<()> {
+    let v = volume.min(100).to_string();
+    soap(client, ip, port, path, RC, "SetVolume", &[("InstanceID", "0"), ("Channel", "Master"), ("DesiredVolume", &v)]).await?;
+    Ok(())
+}
+
 fn event_request(client: &reqwest::Client, t: &Target, method: &str) -> Result<reqwest::RequestBuilder> {
     let path = t.event.as_deref().ok_or_else(|| anyhow!("pas de service d'événements"))?;
     let m = reqwest::Method::from_bytes(method.as_bytes())?;
-    Ok(client.request(m, format!("http://{}:{}{}", t.ip, t.port, path)))
+    Ok(client.request(m, format!("http://{}:{}{}", t.ip, t.port, rooted(path))))
 }
 
 fn timeout_secs(resp: &reqwest::Response) -> u64 {
@@ -422,8 +489,16 @@ struct WavStream {
     scratch: Vec<f32>,
     out: BytesMut,
     started: Instant,
+    base: u64,
     sent: u64,
     ended: Option<&'static str>,
+}
+
+impl WavStream {
+    fn add_sent(&mut self, n: u64) {
+        self.sent += n;
+        self.tap.position.fetch_max(self.base + self.sent, Ordering::Relaxed);
+    }
 }
 
 impl Drop for WavStream {
@@ -442,6 +517,21 @@ impl Drop for WavStream {
     }
 }
 
+// A Sonos does not answer Play until its probe of the stream has seen a non-zero sample, for up to 10 s: with the
+// PC silent, activation used to time out. ±1 LSB (-90 dBFS) in the pre-roll lets it start at once.
+fn preroll_chunk() -> Bytes {
+    static CHUNK: std::sync::OnceLock<Bytes> = std::sync::OnceLock::new();
+    CHUNK
+        .get_or_init(|| {
+            let mut b = BytesMut::with_capacity(240 * 4);
+            for i in 0..240 * 2 {
+                b.extend_from_slice(&(if i & 2 == 0 { -1i16 } else { 1 }).to_le_bytes());
+            }
+            b.freeze()
+        })
+        .clone()
+}
+
 const WAV_TOTAL: u64 = 0xFFFF_FFFF + 8;
 const WAV_HEADER_LEN: u64 = 44;
 
@@ -453,7 +543,11 @@ enum StreamRequest {
     Refuse,
 }
 
-fn classify(is_head: bool, range: Option<&str>) -> StreamRequest {
+// A renderer resuming after a network hiccup asks for bytes it has already been sent; Sonos also reads "tags" at
+// offsets far ahead (16 MiB, 3.7 GB), and holds Play until that request ends.
+const RESUME_SLACK: u64 = 2 << 20;
+
+fn classify(is_head: bool, range: Option<&str>, served: u64) -> StreamRequest {
     if is_head {
         return StreamRequest::Probe;
     }
@@ -464,7 +558,7 @@ fn classify(is_head: bool, range: Option<&str>) -> StreamRequest {
     match start {
         None | Some(0) => StreamRequest::Fresh,
         Some(s) if s <= WAV_HEADER_LEN => StreamRequest::Fresh,
-        Some(s) if s < (1 << 30) => StreamRequest::Resume(s),
+        Some(s) if s <= served + RESUME_SLACK => StreamRequest::Resume(s),
         Some(_) => StreamRequest::Refuse,
     }
 }
@@ -488,11 +582,16 @@ pub async fn wav_handler(
     let id = file.strip_suffix(".wav").unwrap_or(&file).to_string();
     let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok()).map(str::to_string);
     let agent = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("?").chars().take(60).collect::<String>();
-    let req = classify(method == axum::http::Method::HEAD, range.as_deref());
+    let served = engine.tap(&id).map_or(0, |t| t.position.load(Ordering::Relaxed));
+    let req = classify(method == axum::http::Method::HEAD, range.as_deref(), served);
     log::info!("flux {id} : {method} {} ({agent}) → {req:?}", range.as_deref().unwrap_or("sans Range"));
 
     let Some(tap) = engine.tap(&id) else {
         return (StatusCode::NOT_FOUND, "enceinte inactive").into_response();
+    };
+    let base = match req {
+        StreamRequest::Resume(s) => s,
+        _ => 0,
     };
     let (status, stage, pad, content_range) = match req {
         StreamRequest::Probe => {
@@ -521,17 +620,19 @@ pub async fn wav_handler(
         tap.connected.store(true, Ordering::Release);
         engine.notify_changed();
     }
+    let preroll = engine.preroll_chunks();
     let st = WavStream {
         engine,
         id,
         tap,
         my_gen,
         stage,
-        preroll: PREROLL_CHUNKS,
+        preroll,
         pad,
         scratch: Vec::with_capacity(4800),
         out: BytesMut::with_capacity(16 * 1024),
         started: Instant::now(),
+        base,
         sent: 0,
         ended: None,
     };
@@ -544,14 +645,14 @@ pub async fn wav_handler(
                     st.tap.connected.store(true, Ordering::Release);
                     st.engine.notify_changed();
                     let h = wav_streaming_header(48_000, 2);
-                    st.sent += h.len() as u64;
+                    st.add_sent(h.len() as u64);
                     return Some((Ok::<Bytes, std::convert::Infallible>(Bytes::copy_from_slice(&h)), st));
                 }
                 1 => {
                     if st.preroll > 0 {
                         st.preroll -= 1;
-                        st.sent += 240 * 4;
-                        return Some((Ok(Bytes::from(vec![0u8; 240 * 4])), st));
+                        st.add_sent(240 * 4);
+                        return Some((Ok(preroll_chunk()), st));
                     }
                     st.tap.drain();
                     st.stage = 2;
@@ -559,7 +660,7 @@ pub async fn wav_handler(
                 _ => {
                     if st.pad > 0 {
                         let n = std::mem::take(&mut st.pad);
-                        st.sent += n as u64;
+                        st.add_sent(n as u64);
                         return Some((Ok(Bytes::from(vec![0u8; n])), st));
                     }
                     if !st.engine.tap_is_current(&st.id, &st.tap) {
@@ -583,7 +684,7 @@ pub async fn wav_handler(
                     f32_to_s16le(&scratch, &mut st.out);
                     st.scratch = scratch;
                     let chunk = st.out.split().freeze();
-                    st.sent += chunk.len() as u64;
+                    st.add_sent(chunk.len() as u64);
                     return Some((Ok(chunk), st));
                 }
             }
@@ -603,13 +704,38 @@ mod tests {
 
     #[test]
     fn side_requests_never_replace_the_stream() {
-        assert_eq!(classify(true, None), StreamRequest::Probe);
-        assert_eq!(classify(true, Some("bytes=0-")), StreamRequest::Probe);
-        assert_eq!(classify(false, None), StreamRequest::Fresh);
-        assert_eq!(classify(false, Some("bytes=0-")), StreamRequest::Fresh);
-        assert_eq!(classify(false, Some("bytes=2500000-")), StreamRequest::Resume(2_500_000));
-        assert_eq!(classify(false, Some("bytes=4294967175-4294967302")), StreamRequest::Refuse);
-        assert_eq!(classify(false, Some("n'importe quoi")), StreamRequest::Fresh);
+        let served = 3_000_000;
+        assert_eq!(classify(true, None, served), StreamRequest::Probe);
+        assert_eq!(classify(true, Some("bytes=0-"), served), StreamRequest::Probe);
+        assert_eq!(classify(false, None, served), StreamRequest::Fresh);
+        assert_eq!(classify(false, Some("bytes=0-"), served), StreamRequest::Fresh);
+        assert_eq!(classify(false, Some("bytes=2500000-"), served), StreamRequest::Resume(2_500_000));
+        assert_eq!(classify(false, Some("bytes=4294967175-4294967302"), served), StreamRequest::Refuse);
+        assert_eq!(classify(false, Some("n'importe quoi"), served), StreamRequest::Fresh);
+        // Seen at start-up, after 16 KiB had been sent: a tag probe, never a resume.
+        assert_eq!(classify(false, Some("bytes=16777778-"), 16_384), StreamRequest::Refuse);
+    }
+
+    #[test]
+    fn service_urls_resolve_against_the_description() {
+        let loc = reqwest::Url::parse("http://192.168.1.20:42300/desc/device.xml").unwrap();
+        let root = reqwest::Url::parse("http://192.168.1.20:42300/description.xml").unwrap();
+        assert_eq!(resolve_path(&root, Some("AVTransport/control".into())).as_deref(), Some("/AVTransport/control"));
+        assert_eq!(resolve_path(&loc, Some("AVTransport/control".into())).as_deref(), Some("/desc/AVTransport/control"));
+        assert_eq!(resolve_path(&loc, Some("/MediaRenderer/AVTransport/Control".into())).as_deref(), Some("/MediaRenderer/AVTransport/Control"));
+        assert_eq!(resolve_path(&loc, Some("http://192.168.1.20:42300/rc?x=1".into())).as_deref(), Some("/rc?x=1"));
+        assert_eq!(resolve_path(&loc, None), None);
+        assert_eq!(rooted("AVTransport/control"), "/AVTransport/control");
+        assert_eq!(rooted("/a"), "/a");
+    }
+
+    #[test]
+    fn preroll_is_inaudible_but_not_digital_silence() {
+        let c = preroll_chunk();
+        assert_eq!(c.len(), 240 * 4);
+        let samples: Vec<i16> = c.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        assert!(samples.iter().all(|s| s.abs() == 1));
+        assert_eq!(samples.iter().map(|s| *s as i32).sum::<i32>(), 0, "pas de composante continue");
     }
 
     #[test]

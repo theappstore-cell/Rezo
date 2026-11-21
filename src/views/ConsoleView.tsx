@@ -1,4 +1,5 @@
-import { Keyboard, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Keyboard, Link2, Trash2 } from 'lucide-react';
 import { useMidiLearn } from '../hooks/useMidiLearn';
 import { speakersOf, useStore } from '../lib/store';
 import { MasterStrip, RoomStrip, SpeakerStrip } from '../components/ChannelStrip';
@@ -6,8 +7,12 @@ import { t } from '../lib/i18n';
 
 export function ConsoleView() {
   const s = useStore((st) => st.s);
+  const sync = useStore((st) => st.sync);
+  const [syncing, setSyncing] = useState(false);
   const midi = useMidiLearn();
   if (!s) return null;
+  const grouped = s.speakers.some((sp) => sp.syncedTo);
+  const activeCount = s.speakers.filter((sp) => sp.running).length;
 
   const loose = s.speakers.filter((sp) => !s.rooms.some((r) => r.id === sp.roomId));
   const groups = s.rooms.map((room) => ({ room, members: speakersOf(s, room.id) })).filter((g) => g.members.length > 0);
@@ -18,6 +23,14 @@ export function ConsoleView() {
         <button type="button" className="key flex items-center gap-1.5" data-on={midi.learn} aria-pressed={midi.learn} onClick={midi.toggleLearn} disabled={!midi.supported}>
           <Keyboard size={14} />
           MIDI Learn
+        </button>
+        <button type="button" className="key flex items-center gap-1.5" style={{ ['--c' as string]: 'var(--c-ok)' }} data-on={grouped} aria-pressed={grouped} disabled={syncing || (!grouped && activeCount < 2)}
+          onClick={async () => { setSyncing(true); try { await sync(); } finally { setSyncing(false); } }}
+          title={grouped
+            ? t('Dissoudre le groupe Sonos : chaque enceinte reprend son propre flux.')
+            : t("Synchroniser les enceintes actives : les Sonos sont groupées comme dans l'app Sonos (aucun décalage entre elles), les autres sont retardées pour jouer en même temps.")}>
+          <Link2 size={14} />
+          {syncing ? t('Sync…') : 'Sync'}
         </button>
         <div className="legend min-w-0 flex-1 truncate !text-[12px]">
           {!midi.supported && t('Web MIDI indisponible dans cette fenêtre.')}

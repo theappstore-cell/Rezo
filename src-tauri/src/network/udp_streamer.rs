@@ -1,5 +1,5 @@
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle, Thread};
 use std::time::{Duration, Instant};
@@ -13,6 +13,7 @@ pub const RTP_PT: u8 = 111;
 const SILENCE_THRESHOLD: f32 = 1e-4;
 const IDLE_AFTER_MS: f32 = 300.0;
 const HEARTBEAT_MS: f32 = 20.0;
+const VOLUME_REPEAT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub struct UdpConfig {
@@ -21,6 +22,8 @@ pub struct UdpConfig {
     pub bitrate_kbps: u32,
     pub redundancy: bool,
     pub ssrc: u32,
+    // Receiver output volume (0-100), sent out of band: receivers older than this packet drop it as non-RTP.
+    pub volume: Arc<AtomicU32>,
 }
 
 #[derive(Default)]
@@ -104,8 +107,14 @@ fn run(mut cons: Consumer<f32>, mut enc: OpusEnc, sock: UdpSocket, cfg: UdpConfi
     let mut last_poll = Instant::now();
     let mut fbuf = [0u8; 64];
     let _ = sock.set_nonblocking(true);
+    let mut sent_volume: Option<(u32, Instant)> = None;
 
     while !stop.load(Ordering::Acquire) {
+        let volume = cfg.volume.load(Ordering::Relaxed).min(100);
+        if sent_volume.map_or(true, |(v, at)| v != volume || at.elapsed() >= VOLUME_REPEAT) {
+            let _ = sock.send(&volume_packet(volume));
+            sent_volume = Some((volume, Instant::now()));
+        }
         if cfg.redundancy && last_poll.elapsed() >= Duration::from_millis(250) {
             last_poll = Instant::now();
             while let Ok(n) = sock.recv(&mut fbuf) {
@@ -205,9 +214,24 @@ fn parse_feedback(p: &[u8]) -> Option<(u16, u16)> {
     (p.len() >= 8 && &p[..4] == b"RZFB").then(|| (u16::from_be_bytes([p[4], p[5]]), u16::from_be_bytes([p[6], p[7]])))
 }
 
+fn volume_packet(volume: u32) -> [u8; 6] {
+    let mut p = *b"RZVL\x00\x00";
+    p[4..6].copy_from_slice(&(volume.min(100) as u16).to_be_bytes());
+    p
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn volume_packet_is_not_rtp() {
+        let p = volume_packet(73);
+        assert_eq!(&p[..4], b"RZVL");
+        assert_eq!(u16::from_be_bytes([p[4], p[5]]), 73);
+        assert_ne!(p[0] >> 6, 2, "les récepteurs plus anciens doivent l'ignorer");
+        assert_eq!(u16::from_be_bytes([volume_packet(250)[4], volume_packet(250)[5]]), 100);
+    }
 
     #[test]
     fn feedback_parsing() {

@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { mockInvoke, mockListen, startMockMeters } from './mock';
-import type { AudioApp, FullState, Meters, MidiBinding, MixerState, ReceiverInfo, Settings, Source } from './types';
+import type { AudioApp, FullState, Meters, MidiBinding, MixerState, ReceiverInfo, Settings, Source, SyncReport } from './types';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -28,6 +28,9 @@ export const api = {
   listApps: () => call<AudioApp[]>('list_apps'),
   setSend: (id: string, on: boolean) => call<FullState>('set_send', { id, on }),
   setRoomSend: (id: string, on: boolean) => call<FullState>('set_room_send', { id, on }),
+  setDeviceVolume: (id: string, volume: number) => call<void>('set_device_volume', { id, volume }),
+  setUseLineIn: (id: string, on: boolean) => call<FullState>('set_use_line_in', { id, on }),
+  syncSpeakers: () => call<{ report: SyncReport; state: FullState }>('sync_speakers'),
   scanDevices: () => call<FullState>('scan_devices'),
   addManualDevice: (ip: string, kind: 'upnp' | 'native', port?: number) =>
     call<FullState>('add_manual_device', { ip, kind, port }),

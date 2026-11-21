@@ -17,11 +17,11 @@ let state: FullState = {
   source: { kind: 'system' },
   localPc: false,
   speakers: [
-    sp({ id: 'RINCON_A1', name: 'Living room', roomId: 'salon', protocol: 'sonos', model: 'Sonos Five', active: true, running: true, streaming: true, params: base({ volumeDb: -6 }) }),
-    sp({ id: 'RINCON_A2', name: 'Living room (rear)', roomId: 'salon', protocol: 'sonos', model: 'Sonos One', active: true, running: true, streaming: true, params: base({ volumeDb: -9, delayMs: 12.5, lowDb: 3 }) }),
-    sp({ id: 'RINCON_B1', name: 'Kitchen', roomId: 'cuisine', protocol: 'sonos', model: 'Sonos Play:1', params: base({ volumeDb: -12 }) }),
-    sp({ id: 'native-pc2', name: 'Office PC', roomId: 'bureau', protocol: 'native', address: '192.168.1.62', port: 5004, model: 'Rezo receiver', active: true, running: true, streaming: true, latencyMs: 12 }),
-    sp({ id: 'web-ph1', name: "Lea's iPhone", roomId: 'chambre', protocol: 'web', model: 'Browser', active: true, running: true, streaming: true, latencyMs: 31, params: base({ pan: -0.2 }) }),
+    sp({ id: 'RINCON_A1', name: 'Living room', roomId: 'salon', protocol: 'sonos', model: 'Sonos Five', lineIn: true, active: true, running: true, streaming: true, latencyMs: 300, deviceVolume: 35, params: base({ volumeDb: -6 }) }),
+    sp({ id: 'RINCON_A2', name: 'Living room (rear)', roomId: 'salon', protocol: 'sonos', model: 'Sonos One', active: true, running: true, streaming: true, latencyMs: 300, deviceVolume: 28, params: base({ volumeDb: -9, lowDb: 3 }) }),
+    sp({ id: 'RINCON_B1', name: 'Kitchen', roomId: 'cuisine', protocol: 'sonos', model: 'Sonos Play:1', latencyMs: 300, deviceVolume: 20, params: base({ volumeDb: -12 }) }),
+    sp({ id: 'native-pc2', name: 'Office PC', roomId: 'bureau', protocol: 'native', address: '192.168.1.62', port: 5004, model: 'Rezo receiver', active: true, running: true, streaming: true, latencyMs: 42, deviceVolume: 100 }),
+    sp({ id: 'web-ph1', name: "Lea's iPhone", roomId: 'chambre', protocol: 'web', model: 'Browser', active: true, running: true, streaming: true, latencyMs: 31, deviceVolume: 80, params: base({ pan: -0.2 }) }),
     sp({ id: 'RINCON_C1', name: 'TV soundbar', roomId: '', protocol: 'upnp', model: 'DLNA', online: false }),
   ],
   rooms: [
@@ -33,7 +33,7 @@ let state: FullState = {
   ],
   scenes: [{ id: 'salon', name: 'Movie night' }, { id: 'soiree', name: 'Party' }, { id: 'nuit', name: 'Night mode' }],
   midiMap: [],
-  settings: { udpFrameMs: 5, bitrateKbps: 160, redundancy: true, smartOutput: true, pinEnginePeriod: false, keepUiAlive: false, httpPort: 49494, language: '' },
+  settings: { udpFrameMs: 5, bitrateKbps: 160, redundancy: true, smartOutput: true, pinEnginePeriod: false, keepUiAlive: false, httpPort: 49494, language: '', sonosLowLatency: true },
   httpPort: 49494,
   capture: { running: true, error: null },
   pcMuted: true,
@@ -82,6 +82,16 @@ export async function mockInvoke(cmd: string, a: Record<string, any> = {}): Prom
     case 'list_apps': return clone(apps);
     case 'set_send': { const s = spk(a.id); if (s) { s.active = a.on; s.running = a.on && s.online; s.streaming = s.running; } return snap(); }
     case 'set_room_send': state.speakers.filter((s) => s.roomId === a.id && s.online).forEach((s) => { s.active = a.on; s.running = a.on; s.streaming = a.on; }); return snap();
+    case 'set_device_volume': { const s = spk(a.id); if (s) { s.deviceVolume = a.volume; s.receiverVolume = a.volume; } return null; }
+    case 'set_use_line_in': { const s = spk(a.id); if (s) s.useLineIn = a.on; return snap(); }
+    case 'sync_speakers': {
+      const grouped = state.speakers.filter((s) => s.syncedTo);
+      if (grouped.length) { grouped.forEach((s) => { s.syncedTo = null; }); return { report: { grouped: [], delayed: [], ungrouped: grouped.map((s) => s.name) }, state: snap() }; }
+      const sonos = state.speakers.filter((s) => s.protocol === 'sonos' && s.running);
+      sonos.slice(1).forEach((s) => { s.syncedTo = sonos[0].name; });
+      const pc = spk('native-pc2'); if (pc) pc.params.delayMs = 258;
+      return { report: { grouped: sonos.length > 1 ? sonos.map((s) => s.name) : [], delayed: [['Office PC', 258]], ungrouped: [] }, state: snap() };
+    }
     case 'scan_devices': return snap();
     case 'add_manual_device': return snap();
     case 'rename_speaker': { const s = spk(a.id); if (s) s.name = a.name; return null; }

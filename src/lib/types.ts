@@ -34,6 +34,9 @@ export interface Speaker {
   port: number;
   model?: string | null;
   uuid?: string | null;
+  lineIn?: boolean;
+  useLineIn?: boolean;
+  receiverVolume?: number;
   active: boolean;
   params: ChannelParams;
   running: boolean;
@@ -42,6 +45,14 @@ export interface Speaker {
   error?: string | null;
   group?: string | null;
   latencyMs?: number | null;
+  deviceVolume?: number | null;
+  syncedTo?: string | null;
+}
+
+export interface SyncReport {
+  grouped: string[];
+  delayed: [string, number][];
+  ungrouped: string[];
 }
 
 export interface Room {
@@ -65,6 +76,7 @@ export interface Settings {
   keepUiAlive: boolean;
   httpPort: number;
   language: string;
+  sonosLowLatency: boolean;
 }
 
 export interface MidiBinding {
