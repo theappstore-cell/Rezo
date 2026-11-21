@@ -4,7 +4,8 @@ import type { ReactNode } from 'react';
 import { api } from '../lib/api';
 import { fmtMs } from '../lib/db';
 import { ROOM_COLORS, ROOM_ICONS, protocolBadge, protocolIcon } from '../lib/icons';
-import { useStore } from '../lib/store';
+import { roomLabel, useStore } from '../lib/store';
+import { checkNow } from './UpdateBanner';
 import { setLang, t, useLang } from '../lib/i18n';
 import { isWindows } from '../lib/platform';
 import { useUi } from '../lib/ui';
@@ -187,7 +188,7 @@ export function SpeakerSheet({ id }: { id: string }) {
               <button key={r.id || 'none'} type="button" aria-pressed={sp.roomId === r.id} onClick={() => useStore.getState().moveSpeaker(sp.id, r.id)}
                 className="rounded-[2px] border px-3 py-1 text-[11.5px] transition"
                 style={{ borderColor: sp.roomId === r.id ? r.color : 'var(--c-line)', background: sp.roomId === r.id ? `${r.color}22` : 'transparent', color: sp.roomId === r.id ? r.color : 'var(--c-ink3)' }}>
-                {r.name}
+                {'id' in r && r.id ? roomLabel(r) : r.name}
               </button>
             ))}
           </div>
@@ -223,14 +224,14 @@ export function SpeakerSheet({ id }: { id: string }) {
           </div>
           <p className="mt-1.5 text-[10.5px] leading-snug text-dim">
             {t('Un retard négatif retarde les autres enceintes (on ne peut pas « avancer » un flux temps réel).')}
-            {sp.protocol === 'sonos' && ` ${t('Les Sonos tamponnent le flux (≈ 1 à 3 s) : retardez les autres sorties pour les aligner.')}`}
+            {sp.protocol === 'sonos' && ` ${t('Une Sonos garde environ 0,3 s de tampon : le bouton Sync de la Console aligne les autres enceintes sur elle.')}`}
           </p>
         </Field>
 
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-[2px] bg-inset p-3 font-mono text-[10.5px] text-mute">
           <dt>{t('Protocole')}</dt><dd className="text-ink">{protocolBadge(sp)}</dd>
           <dt>{t('Adresse')}</dt><dd className="text-ink">{sp.address || '—'}{sp.port ? `:${sp.port}` : ''}</dd>
-          {sp.model && (<><dt>{t('Modèle')}</dt><dd className="text-ink">{sp.model}</dd></>)}
+          {sp.model && (<><dt>{t('Modèle')}</dt><dd className="text-ink">{t(sp.model)}</dd></>)}
           {sp.group && (<><dt>{t('Groupe Sonos')}</dt><dd className="text-ink">{sp.group}</dd></>)}
           <dt>{t('Identifiant')}</dt><dd className="truncate text-ink" title={sp.id}>{sp.id}</dd>
         </dl>
@@ -253,7 +254,7 @@ export function SpeakerSheet({ id }: { id: string }) {
 export function RoomEditor({ id }: { id?: string }) {
   const close = useUi((u) => u.close);
   const room = useStore((st) => st.s?.rooms.find((r) => r.id === id));
-  const [name, setName] = useState(room?.name ?? '');
+  const [name, setName] = useState(room ? roomLabel(room) : '');
   const [icon, setIcon] = useState(room?.icon ?? 'Speaker');
   const [color, setColor] = useState(room?.color ?? ROOM_COLORS[0]);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -306,6 +307,7 @@ export function SettingsModal() {
   const s = useStore((st) => st.s);
   const apply = useStore((st) => st.apply);
   const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const lang = useLang((l) => l.lang);
 
   useEffect(() => {
@@ -332,6 +334,12 @@ export function SettingsModal() {
           <div className="flex gap-1" role="group" aria-label={t('Langue')}>
             <button type="button" className="key !h-[26px]" data-on={lang === 'fr'} aria-pressed={lang === 'fr'} onClick={() => setLang('fr')}>Français</button>
             <button type="button" className="key !h-[26px]" data-on={lang === 'en'} aria-pressed={lang === 'en'} onClick={() => setLang('en')}>English</button>
+          </div>
+        </Row>
+        <Row title={t('Mises à jour')} hint={updateMsg ?? t('Au lancement puis toutes les 6 h, Rezo regarde sur GitHub si une nouvelle version est publiée. Le téléchargement est vérifié avec la somme SHA-256 de la version avant d\'être installé.')}>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" className="key !h-[26px] !text-[11.5px]" onClick={async () => { setUpdateMsg(t('Vérification…')); setUpdateMsg(await checkNow()); }}>{t('Vérifier')}</button>
+            <Toggle on={set.checkUpdates} label={t('Vérifier les mises à jour')} onChange={(v) => void update({ checkUpdates: v })} />
           </div>
         </Row>
         <Row title={isWindows ? t('Démarrer avec Windows') : t("Ouvrir à l'ouverture de session")} hint={t('Se lance directement dans la zone de notification.')}>

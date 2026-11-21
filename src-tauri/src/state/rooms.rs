@@ -280,6 +280,7 @@ pub struct Settings {
     pub http_port: u16,
     pub language: String,
     pub sonos_low_latency: bool,
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -294,6 +295,7 @@ impl Default for Settings {
             http_port: 49494,
             language: String::new(),
             sonos_low_latency: true,
+            check_updates: true,
         }
     }
 }

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { AddDeviceModal, RoomEditor, SettingsModal, SpeakerSheet } from './components/Dialogs';
 import { TopBar } from './components/TopBar';
+import { UpdateBanner } from './components/UpdateBanner';
 import { useMidi } from './lib/midi';
 import { useStore } from './lib/store';
 import { t, useLang } from './lib/i18n';
@@ -70,6 +71,7 @@ export default function App() {
   return (
     <div key={lang} className={`flex h-full flex-col ${learning ? 'learning' : ''}`}>
       <TopBar />
+      <UpdateBanner />
       <main className="min-h-0 flex-1">
         {view === 'rooms' && <RoomsView />}
         {view === 'plan' && <PlanView />}

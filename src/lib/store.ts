@@ -214,6 +214,12 @@ export function speakersOf(s: FullState, roomId: string): Speaker[] {
   return s.speakers.filter((sp) => sp.roomId === roomId);
 }
 
+// The rooms created on first launch keep their French name in the config: show it translated until renamed.
+const DEFAULT_ROOMS: Record<string, string> = { salon: 'Salon', cuisine: 'Cuisine', bureau: 'Bureau', chambre: 'Chambre', terrasse: 'Terrasse' };
+export function roomLabel(r: { id: string; name: string }): string {
+  return DEFAULT_ROOMS[r.id] === r.name ? t(r.name) : r.name;
+}
+
 export function colorOf(s: FullState, sp: Speaker): string {
   return s.rooms.find((r) => r.id === sp.roomId)?.color ?? 'var(--c-ink3)';
 }

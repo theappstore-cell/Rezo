@@ -1,7 +1,7 @@
-import { Pencil, Plus, SlidersHorizontal } from 'lucide-react';
+import { Pencil, Plus, SlidersHorizontal, Volume2 } from 'lucide-react';
 import { dbToPos, fmtDb, posToDb, roundTo } from '../lib/db';
 import { protocolBadge } from '../lib/icons';
-import { colorOf, speakersOf, useStore } from '../lib/store';
+import { colorOf, roomLabel, speakersOf, useStore } from '../lib/store';
 import { useUi } from '../lib/ui';
 import type { Room, Speaker } from '../lib/types';
 import { LedMeter } from '../components/LedMeter';
@@ -14,8 +14,11 @@ const ZERO_DB = dbToPos(0);
 function SpeakerRow({ sp, color }: { sp: Speaker; color: string }) {
   const setSend = useStore((s) => s.setSend);
   const setParam = useStore((s) => s.setParam);
+  const setDeviceVolume = useStore((s) => s.setDeviceVolume);
   const open = useUi((u) => u.open);
   const off = !sp.online && !sp.running;
+  const hasDevice = sp.deviceVolume !== null && sp.deviceVolume !== undefined;
+  const deviceLabel = sp.protocol === 'sonos' || sp.protocol === 'upnp' ? t("Volume de l'enceinte (le même que dans l'app Sonos)") : t('Volume du récepteur');
   const detail = [protocolBadge(sp), sp.group ? t('groupe {name}', { name: sp.group }) : null, off ? t('hors ligne') : null].filter(Boolean).join(' · ');
 
   return (
@@ -45,6 +48,14 @@ function SpeakerRow({ sp, color }: { sp: Speaker; color: string }) {
         </div>
         <span className="num w-[62px] shrink-0 text-right text-[12.5px]">{fmtDb(sp.params.volumeDb)} dB</span>
       </div>
+      {hasDevice && (
+        <div className="mt-0.5 flex items-center gap-2.5 pl-[20px]" title={deviceLabel}>
+          <Volume2 size={14} className="w-[16px] shrink-0 text-dim" aria-hidden />
+          <Slider label={`${deviceLabel} : ${sp.name}`} value={(sp.deviceVolume ?? 0) / 100} color={color} step={0.01}
+            onChange={(v) => setDeviceVolume(sp.id, Math.round(v * 100))} controlId={`ch:${sp.id}:deviceVolume`} />
+          <span className="num w-[62px] shrink-0 text-right text-[12.5px]">{sp.deviceVolume}</span>
+        </div>
+      )}
       {sp.error && <div className="mt-2 rounded border border-bad/50 bg-bad/10 px-2 py-1 text-[12px] text-bad">{sp.error}</div>}
     </li>
   );
@@ -61,16 +72,16 @@ function RoomGroup({ room, members }: { room: Room; members: Speaker[] }) {
     <section className="shrink-0 overflow-hidden rounded-md border border-line bg-panel">
       <header className="flex items-center gap-2.5 bg-panel2 px-3 py-2">
         <span className="h-[10px] w-[10px] shrink-0 rounded-full" style={{ background: room.color }} />
-        <h2 className="min-w-0 flex-1 truncate text-[14.5px] font-semibold">{room.name}</h2>
+        <h2 className="min-w-0 flex-1 truncate text-[14.5px] font-semibold">{roomLabel(room)}</h2>
         <span className="legend num">{t(activeCount > 1 ? '{n} / {m} actives' : '{n} / {m} active', { n: activeCount, m: members.length })}</span>
         <button type="button" aria-label={t('Modifier la pièce')} title={t('Modifier la pièce')} onClick={() => open({ type: 'room', id: room.id })} className="rounded p-1 text-dim hover:bg-raise hover:text-ink">
           <Pencil size={13} />
         </button>
-        <Toggle on={activeCount > 0} onChange={(v) => void setRoomSend(room.id, v)} label={t('Toute la pièce {name}', { name: room.name })} color="var(--c-ok)" />
+        <Toggle on={activeCount > 0} onChange={(v) => void setRoomSend(room.id, v)} label={t('Toute la pièce {name}', { name: roomLabel(room) })} color="var(--c-ok)" />
       </header>
       <div className="flex items-center gap-2.5 px-3 py-1.5">
         <span className="legend w-[46px] shrink-0">{t('Pièce')}</span>
-        <Slider label={t('Volume de la pièce {name}', { name: room.name })} value={dbToPos(room.volumeDb)} color={room.color} mark={ZERO_DB}
+        <Slider label={t('Volume de la pièce {name}', { name: roomLabel(room) })} value={dbToPos(room.volumeDb)} color={room.color} mark={ZERO_DB}
           onChange={(v) => setRoomParam(room.id, 'volumeDb', roundTo(posToDb(v), 0.5))} onReset={() => setRoomParam(room.id, 'volumeDb', 0)} controlId={`room:${room.id}:volumeDb`} />
         <span className="num w-[62px] shrink-0 text-right text-[12.5px]">{fmtDb(room.volumeDb)} dB</span>
       </div>
@@ -126,7 +137,7 @@ export function RoomsView() {
       )}
       {!nothing && (
         <button type="button" onClick={() => open({ type: 'add' })} className="key mb-1 flex shrink-0 items-center justify-center gap-1.5 !h-9">
-          <Plus size={14} /> Ajouter un appareil
+          <Plus size={14} /> {t('Ajouter un appareil')}
         </button>
       )}
     </div>

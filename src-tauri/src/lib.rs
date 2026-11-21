@@ -4,6 +4,7 @@ mod engine;
 mod network;
 mod state;
 mod ui;
+mod updater;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -67,6 +68,8 @@ pub fn run() {
     }
     logger.init();
     std::panic::set_hook(Box::new(|info| log::error!("panic : {info}")));
+    // After a self-update, wait for the previous process so the single-instance check lets this one start.
+    updater::after_update();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -113,6 +116,9 @@ pub fn run() {
             commands::set_device_volume,
             commands::set_use_line_in,
             commands::sync_speakers,
+            commands::check_update,
+            commands::install_update,
+            commands::open_release_page,
             commands::scan_devices,
             commands::add_manual_device,
             commands::rename_speaker,

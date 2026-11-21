@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Keyboard, Link2, Trash2 } from 'lucide-react';
 import { useMidiLearn } from '../hooks/useMidiLearn';
-import { speakersOf, useStore } from '../lib/store';
+import { roomLabel, speakersOf, useStore } from '../lib/store';
 import { MasterStrip, RoomStrip, SpeakerStrip } from '../components/ChannelStrip';
 import { t } from '../lib/i18n';
 
@@ -53,7 +53,7 @@ export function ConsoleView() {
             <SpeakerStrip key={sp.id} sp={sp} />
           ))}
           {groups.map(({ room, members }) => (
-            <div key={room.id} className="flex shrink-0 gap-1.5 border-r border-line pr-2" aria-label={t('Pièce {name}', { name: room.name })}>
+            <div key={room.id} className="flex shrink-0 gap-1.5 border-r border-line pr-2" aria-label={t('Pièce {name}', { name: roomLabel(room) })}>
               {members.map((sp) => (
                 <SpeakerStrip key={sp.id} sp={sp} room={room} />
               ))}

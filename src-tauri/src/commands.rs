@@ -94,6 +94,32 @@ pub async fn sync_speakers(engine: Eng<'_>) -> Res<SyncReply> {
 }
 
 #[tauri::command]
+pub async fn check_update() -> Res<crate::updater::UpdateInfo> {
+    crate::updater::check().await.map_err(e2s)
+}
+
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Res<()> {
+    crate::updater::install(app).await.map_err(e2s)
+}
+
+// Opens the releases page only: the interface cannot ask for any other URL.
+#[tauri::command]
+pub fn open_release_page() -> Res<()> {
+    const PAGE: &str = "https://github.com/theappstore-cell/Rezo/releases/latest";
+    #[cfg(windows)]
+    let r = {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("explorer.exe").arg(PAGE).creation_flags(0x0800_0000).spawn()
+    };
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").arg(PAGE).spawn();
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    let r = std::process::Command::new("xdg-open").arg(PAGE).spawn();
+    r.map(|_| ()).map_err(e2s)
+}
+
+#[tauri::command]
 pub async fn scan_devices(engine: Eng<'_>) -> Res<FullState> {
     let e = engine.inner().clone();
     e.scan().await;

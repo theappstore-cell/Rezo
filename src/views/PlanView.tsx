@@ -1,7 +1,8 @@
-import { Plus } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent } from 'react';
-import { speakersOf, useStore } from '../lib/store';
+import { roomLabel, speakersOf, useStore } from '../lib/store';
+import { api } from '../lib/api';
 import { useUi } from '../lib/ui';
 import type { Room, Speaker } from '../lib/types';
 import { t } from '../lib/i18n';
@@ -22,6 +23,12 @@ export function PlanView() {
   const open = useUi((u) => u.open);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  const [confirmPrune, setConfirmPrune] = useState(false);
+  useEffect(() => {
+    if (!confirmPrune) return;
+    const h = setTimeout(() => setConfirmPrune(false), 4000);
+    return () => clearTimeout(h);
+  }, [confirmPrune]);
   const start = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
 
   if (!s) return null;
@@ -88,10 +95,16 @@ export function PlanView() {
       >
         <div className="flex items-center gap-2">
           {room && <span className="h-[10px] w-[10px] shrink-0 rounded-full" style={{ background: room.color }} />}
-          <h2 className="min-w-0 flex-1 truncate text-[14px] font-semibold">{room?.name ?? t('Sans pièce')}</h2>
+          <h2 className="min-w-0 flex-1 truncate text-[14px] font-semibold">{room ? roomLabel(room) : t('Sans pièce')}</h2>
+          {room && (
+            <button type="button" aria-label={t('Modifier la pièce')} title={t('Modifier ou supprimer la pièce')} onClick={() => open({ type: 'room', id: room.id })}
+              className="rounded p-1 text-dim hover:bg-raise hover:text-ink">
+              <Pencil size={13} />
+            </button>
+          )}
           {room && (
             <button type="button" className="key !h-[24px] !px-2 !text-[11.5px]" data-on={anyOn} style={{ ['--c' as string]: 'var(--c-ok)' }}
-              disabled={members.length === 0} aria-pressed={anyOn} aria-label={t('Allumer ou éteindre {name}', { name: room.name })}
+              disabled={members.length === 0} aria-pressed={anyOn} aria-label={t('Allumer ou éteindre {name}', { name: roomLabel(room) })}
               onClick={() => void setRoomSend(room.id, !anyOn)}>{anyOn ? t('Allumée') : t('Éteinte')}</button>
           )}
         </div>
@@ -105,9 +118,26 @@ export function PlanView() {
   };
 
   const unassigned = s.speakers.filter((sp) => !s.rooms.some((r) => r.id === sp.roomId));
+  const empty = s.rooms.filter((r) => speakersOf(s, r.id).length === 0);
+  const prune = async () => {
+    if (!confirmPrune) return setConfirmPrune(true);
+    setConfirmPrune(false);
+    for (const r of empty) await api.deleteRoom(r.id);
+    useStore.getState().apply(await api.getState());
+  };
 
   return (
     <div className="h-full overflow-y-auto p-3">
+      {empty.length > 0 && (
+        <div className="mb-3 flex items-center gap-2">
+          <p className="legend min-w-0 flex-1 truncate">{t('Glissez les enceintes entre les pièces ; le crayon modifie ou supprime une pièce.')}</p>
+          <button type="button" onClick={() => void prune()} data-on={confirmPrune} style={{ ['--c' as string]: 'var(--c-bad)' }}
+            className="key flex shrink-0 items-center gap-1.5 !h-7 !text-[12px]" title={t('Supprime les pièces sans enceinte, dont celles créées au premier lancement (Salon, Cuisine…). Les enceintes ne sont pas touchées.')}>
+            <Trash2 size={13} />
+            {confirmPrune ? t('Supprimer {n} pièce(s) ?', { n: empty.length }) : t('Supprimer les pièces vides')}
+          </button>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 [@media(min-width:900px)]:grid-cols-3">
         {s.rooms.map((room) => box(room, speakersOf(s, room.id)))}
         {box(null, unassigned)}

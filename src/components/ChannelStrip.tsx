@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Volume2 } from 'lucide-react';
 import { clamp, fmtDb, fmtMs, fmtPan } from '../lib/db';
 import { protocolBadge } from '../lib/icons';
-import { useStore } from '../lib/store';
+import { roomLabel, useStore } from '../lib/store';
 import { t } from '../lib/i18n';
 import type { Room, Speaker } from '../lib/types';
 import { ChannelFader } from './ChannelFader';
@@ -75,7 +75,7 @@ export const SpeakerStrip = memo(function SpeakerStrip({ sp, room }: { sp: Speak
   const isNetwork = sp.protocol === 'sonos' || sp.protocol === 'upnp';
 
   return (
-    <Shell color={color} name={sp.name} sub={room?.name ?? t('Sans pièce')} width={hasDevice ? 140 : 112}>
+    <Shell color={color} name={sp.name} sub={room ? roomLabel(room) : t('Sans pièce')} width={hasDevice ? 140 : 112}>
       <div className="flex items-center gap-1.5">
         <span className="inline-block h-[8px] w-[8px] rounded-full" style={{ background: state }} title={sp.streaming ? t('Reçoit le flux') : off ? t('Hors ligne') : t('En attente')} />
         <span className="legend truncate">{protocolBadge(sp)}</span>
@@ -137,7 +137,7 @@ export const RoomStrip = memo(function RoomStrip({ room, members }: { room: Room
   return (
     <div className="flex shrink-0 flex-col gap-2 rounded-md border border-rule bg-panel2 p-2" style={{ width: 96, borderTop: `3px solid ${room.color}` }}>
       <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold" title={room.name}>{room.name}</div>
+        <div className="truncate text-[13px] font-semibold" title={roomLabel(room)}>{roomLabel(room)}</div>
         <div className="legend">Bus · {members.filter((m) => m.active).length}/{members.length}</div>
       </div>
       <div className="mt-auto grid grid-cols-1 gap-1">

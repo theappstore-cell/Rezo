@@ -33,7 +33,7 @@ let state: FullState = {
   ],
   scenes: [{ id: 'salon', name: 'Movie night' }, { id: 'soiree', name: 'Party' }, { id: 'nuit', name: 'Night mode' }],
   midiMap: [],
-  settings: { udpFrameMs: 5, bitrateKbps: 160, redundancy: true, smartOutput: true, pinEnginePeriod: false, keepUiAlive: false, httpPort: 49494, language: '', sonosLowLatency: true },
+  settings: { udpFrameMs: 5, bitrateKbps: 160, redundancy: true, smartOutput: true, pinEnginePeriod: false, keepUiAlive: false, httpPort: 49494, language: '', sonosLowLatency: true, checkUpdates: true },
   httpPort: 49494,
   capture: { running: true, error: null },
   pcMuted: true,
@@ -92,6 +92,21 @@ export async function mockInvoke(cmd: string, a: Record<string, any> = {}): Prom
       const pc = spk('native-pc2'); if (pc) pc.params.delayMs = 258;
       return { report: { grouped: sonos.length > 1 ? sonos.map((s) => s.name) : [], delayed: [['Office PC', 258]], ungrouped: [] }, state: snap() };
     }
+    case 'check_update': return { current: '0.2.0', latest: '0.3.0', available: true, page: 'https://github.com/theappstore-cell/Rezo/releases/latest', asset: 'Rezo-0.3.0-windows-x64-portable.exe', size: 8_400_000, canInstall: true, folder: 'C:\\Rezo' };
+    case 'install_update': {
+      let received = 0;
+      const total = 8_400_000;
+      await new Promise<void>((res) => {
+        const h = setInterval(() => {
+          received = Math.min(total, received + 420_000);
+          listeners['update-progress']?.forEach((cb) => cb({ received, total, stage: received < total ? 'download' : 'verify' }));
+          if (received >= total) { clearInterval(h); res(); }
+        }, 120);
+      });
+      listeners['update-progress']?.forEach((cb) => cb({ received: total, total, stage: 'restart' }));
+      return null;
+    }
+    case 'open_release_page': return null;
     case 'scan_devices': return snap();
     case 'add_manual_device': return snap();
     case 'rename_speaker': { const s = spk(a.id); if (s) s.name = a.name; return null; }

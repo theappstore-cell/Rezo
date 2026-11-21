@@ -25,6 +25,7 @@ Rezo sends what your computer is playing to the speakers around your home, all a
 - **Audio mixer window**: volume and mute for each PC output (wired, Bluetooth, HDMI, USB) and each application, and switching the default output.
 - **Smart Output** (optional): mutes the PC output while network speakers play and restores that exact output afterwards.
 - **French and English** interface, switchable in Settings.
+- **Updates**: Rezo tells you when a new release is out and can download it into its own folder, check it against the release's SHA-256 checksums and restart on it.
 
 ## Latency
 

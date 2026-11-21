@@ -77,6 +77,18 @@ export interface Settings {
   httpPort: number;
   language: string;
   sonosLowLatency: boolean;
+  checkUpdates: boolean;
+}
+
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  available: boolean;
+  page: string;
+  asset?: string | null;
+  size?: number | null;
+  canInstall: boolean;
+  folder: string;
 }
 
 export interface MidiBinding {
