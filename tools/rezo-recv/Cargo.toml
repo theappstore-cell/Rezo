@@ -2,6 +2,7 @@
 name = "rezo-recv"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.85"
 description = "Reference native Rezo receiver: Opus over UDP/RTP to the local sound card (Windows, macOS, Linux)"
 authors = ["theappstore-cell"]
 license = "GPL-3.0-only"
@@ -9,11 +10,11 @@ repository = "https://github.com/theappstore-cell/Rezo"
 
 [dependencies]
 anyhow = "1"
-cpal = "0.15"
-mdns-sd = "0.11"
-opus = "0.3"
-rtrb = "0.3"
-socket2 = "0.5"
+cpal = "0.18"
+mdns-sd = "0.22"
+opus = "0.4"
+rtrb = "0.4"
+socket2 = "0.6"
 
 [profile.release]
 opt-level = 3

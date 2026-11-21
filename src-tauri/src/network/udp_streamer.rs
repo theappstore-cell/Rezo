@@ -62,7 +62,7 @@ pub fn spawn(cons: Consumer<f32>, cfg: UdpConfig) -> Result<UdpHandle> {
     let enc = OpusEnc::new(cfg.frame_ms, cfg.bitrate_kbps)?;
     let sock = UdpSocket::bind("0.0.0.0:0")?;
     sock.connect(cfg.addr)?;
-    let _ = socket2::SockRef::from(&sock).set_tos(0xB8);
+    let _ = socket2::SockRef::from(&sock).set_tos_v4(0xB8);
 
     let stop = Arc::new(AtomicBool::new(false));
     let stats = Arc::new(UdpStats::default());

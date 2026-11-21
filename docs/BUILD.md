@@ -30,10 +30,9 @@ npx tauri build --target aarch64-pc-windows-msvc --bundles nsis
 
 ### macOS 11+
 
-Xcode command line tools, Rust, CMake (`brew install cmake`) and Node.js 20+. Build libopus from source so the app does not depend on Homebrew:
+Xcode command line tools, Rust, CMake (`brew install cmake`) and Node.js 20+. libopus is always built from source and linked statically, so the app does not depend on Homebrew:
 
 ```bash
-export LIBOPUS_STATIC=1 LIBOPUS_NO_PKG=1
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 npm ci
 npx tauri build --target universal-apple-darwin --bundles app,dmg
