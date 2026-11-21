@@ -50,6 +50,7 @@ function StatusBar() {
       </span>
       <span className="num" title={t('{n} reçoivent effectivement le flux', { n: streaming })}>{t(active > 1 ? '{n} enceintes en service' : '{n} enceinte en service', { n: active })}</span>
       <span className="ml-auto" title={t("Smart Output : coupe la sortie du PC tant qu'une enceinte réseau est active")}>{s.pcMuted ? t('PC coupé') : t('PC audible')}</span>
+      <span className="num text-dim" title={t('Version de Rezo')}>v{s.version}</span>
     </footer>
   );
 }

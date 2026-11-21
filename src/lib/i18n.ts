@@ -249,6 +249,7 @@ const EN: Record<string, string> = {
     'To send a specific app to another output, use Windows Settings › System › Sound › Volume mixer: Windows does not let third-party apps do this reliably.',
   'Sons système Windows': 'Windows system sounds',
   'Processus {n}': 'Process {n}',
+  'Version de Rezo': 'Rezo version',
   'Rezo {latest} est disponible (version installée : {current}).': 'Rezo {latest} is available (installed: {current}).',
   'Téléchargement de Rezo {latest} : {done} / {total} Mo': 'Downloading Rezo {latest}: {done} / {total} MB',
   'Vérification de la somme SHA-256…': 'Checking the SHA-256 checksum…',

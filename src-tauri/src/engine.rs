@@ -73,6 +73,7 @@ pub struct FullState {
     pub http_port: u16,
     pub capture: CaptureView,
     pub pc_muted: bool,
+    pub version: &'static str,
 }
 
 #[derive(Serialize, Clone)]
@@ -459,6 +460,7 @@ impl Engine {
                 http_port: self.http_port.load(Ordering::Relaxed),
                 capture: CaptureView { running: running_cap, error: cap_err },
                 pc_muted: self.pc_muted.load(Ordering::Relaxed),
+                version: env!("CARGO_PKG_VERSION"),
             }
         })
     }

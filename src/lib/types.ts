@@ -114,6 +114,7 @@ export interface FullState {
   httpPort: number;
   capture: { running: boolean; error?: string | null };
   pcMuted: boolean;
+  version: string;
 }
 
 export interface AudioApp {

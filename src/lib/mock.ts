@@ -37,6 +37,7 @@ let state: FullState = {
   httpPort: 49494,
   capture: { running: true, error: null },
   pcMuted: true,
+  version: '0.3.0',
 };
 
 const apps: AudioApp[] = [
