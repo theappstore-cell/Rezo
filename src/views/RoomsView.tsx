@@ -5,9 +5,11 @@ import { colorOf, roomLabel, speakersOf, useStore } from '../lib/store';
 import { useUi } from '../lib/ui';
 import type { Room, Speaker } from '../lib/types';
 import { LedMeter } from '../components/LedMeter';
+import { eqActive } from '../components/Equalizer';
 import { Toggle } from '../components/Modal';
 import { Slider } from '../components/Slider';
 import { t } from '../lib/i18n';
+import { useScrollMemory } from '../lib/layout';
 
 const ZERO_DB = dbToPos(0);
 
@@ -36,6 +38,8 @@ function SpeakerRow({ sp, color }: { sp: Speaker; color: string }) {
           aria-pressed={sp.params.mute} onClick={() => setParam(sp.id, 'mute', !sp.params.mute)}>Mute</button>
         <button type="button" className="key !h-[26px] !px-2 !text-[11.5px]" data-on={sp.params.solo} style={{ ['--c' as string]: 'var(--c-warn)' }}
           aria-pressed={sp.params.solo} onClick={() => setParam(sp.id, 'solo', !sp.params.solo)}>Solo</button>
+        <button type="button" className="key !h-[26px] !px-2 !text-[11.5px]" data-on={eqActive(sp)} style={{ ['--c' as string]: color }}
+          title={t('Égaliseur 6 bandes de cette enceinte')} onClick={() => open({ type: 'eq', id: sp.id })}>EQ</button>
         <button type="button" className="key key-icon grid !h-[26px] !w-[26px] place-items-center" aria-label={t("Réglages de l'enceinte")} title={t('Réglages')} onClick={() => open({ type: 'speaker', id: sp.id })}>
           <SlidersHorizontal size={13} />
         </button>
@@ -99,6 +103,7 @@ export function RoomsView() {
   const scanning = useStore((st) => st.scanning);
   const scan = useStore((st) => st.scan);
   const open = useUi((u) => u.open);
+  const scroller = useScrollMemory<HTMLDivElement>('rooms');
   if (!s) return null;
 
   const groups = s.rooms.map((room) => ({ room, members: speakersOf(s, room.id) })).filter((g) => g.members.length > 0);
@@ -106,7 +111,7 @@ export function RoomsView() {
   const nothing = s.speakers.length === 0;
 
   return (
-    <div className="flex h-full flex-col gap-3 overflow-y-auto p-3">
+    <div ref={scroller} className="flex h-full flex-col gap-3 overflow-y-auto p-2.5 min-[480px]:p-3">
       {nothing && (
         <div className="m-auto flex max-w-[300px] flex-col items-center gap-3 py-10 text-center">
           <h2 className="text-[16px] font-semibold">{t('Aucune enceinte trouvée')}</h2>

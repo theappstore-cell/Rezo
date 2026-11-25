@@ -23,6 +23,9 @@ export interface ChannelParams {
   compMakeupDb: number;
   gateOn: boolean;
   gateThreshDb: number;
+  eqEnabled: boolean;
+  eqPreset: string;
+  eqGains: number[];
 }
 
 export interface Speaker {
@@ -78,6 +81,19 @@ export interface Settings {
   language: string;
   sonosLowLatency: boolean;
   checkUpdates: boolean;
+}
+
+export interface MediaState {
+  available: boolean;
+  app: string;
+  title: string;
+  artist: string;
+  playing: boolean;
+  positionMs: number;
+  durationMs: number;
+  canSeek: boolean;
+  canNext: boolean;
+  canPrevious: boolean;
 }
 
 export interface UpdateInfo {

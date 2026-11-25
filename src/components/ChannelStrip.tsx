@@ -8,6 +8,8 @@ import { t } from '../lib/i18n';
 import type { Room, Speaker } from '../lib/types';
 import { ChannelFader } from './ChannelFader';
 import { DeviceFader } from './DeviceFader';
+import { eqActive } from './Equalizer';
+import { useUi } from '../lib/ui';
 import { FxButton } from './FxPanel';
 import { NudgeButton, Pad } from './Pad';
 import { RotaryKnob } from './RotaryKnob';
@@ -64,6 +66,7 @@ export const SpeakerStrip = memo(function SpeakerStrip({ sp, room }: { sp: Speak
   const setSend = useStore((s) => s.setSend);
   const setDeviceVolume = useStore((s) => s.setDeviceVolume);
   const setUseLineIn = useStore((s) => s.setUseLineIn);
+  const openModal = useUi((u) => u.open);
   const color = room?.color ?? NEUTRAL;
   const p = sp.params;
   const id = `ch:${sp.id}`;
@@ -101,7 +104,11 @@ export const SpeakerStrip = memo(function SpeakerStrip({ sp, room }: { sp: Speak
         <NudgeButton label="+1 ms" title={t('Retarder de 1 ms')} onClick={() => setParam(sp.id, 'delayMs', clamp(p.delayMs + 1, -500, 500))} />
       </div>
 
-      <FxButton sp={sp} color={color} />
+      <div className="grid grid-cols-[1fr_auto] gap-1">
+        <FxButton sp={sp} color={color} />
+        <button type="button" className="key !h-[26px] !px-2 !text-[11.5px]" data-on={eqActive(sp)} style={{ ['--c' as string]: color }}
+          title={t('Égaliseur 6 bandes de cette enceinte')} onClick={() => openModal({ type: 'eq', id: sp.id })}>EQ</button>
+      </div>
 
       <div className="grid grid-cols-2 gap-1">
         <Pad className={sp.lineIn ? '' : 'col-span-2'} label={t('Envoi')} color="var(--c-ok)" on={sp.active} onToggle={() => void setSend(sp.id, !sp.active)}

@@ -169,6 +169,79 @@ impl Default for Eq3 {
     }
 }
 
+// Six-band equaliser on Spotify's bands: low shelf at 60 Hz, peaks from 150 Hz to 2.4 kHz, high shelf at 15 kHz.
+pub const EQ6_FREQS: [f64; 6] = [60.0, 150.0, 400.0, 1000.0, 2400.0, 15000.0];
+pub const EQ6_MAX_DB: f32 = 12.0;
+const EQ6_Q: f64 = 1.0;
+// Gains glide by at most 0.2 dB per 2.5 ms block (12 dB in 150 ms): each coefficient step is too small to click.
+const EQ6_GLIDE_DB: f32 = 0.2;
+
+pub struct Eq6 {
+    bands: [Band; 6],
+    cur: [f32; 6],
+}
+
+impl Eq6 {
+    pub fn new() -> Self {
+        Self { bands: [Band::new(); 6], cur: [0.0; 6] }
+    }
+
+    fn coef(band: usize, db: f32) -> Coef {
+        match band {
+            0 => Coef::low_shelf(EQ6_FREQS[0], db as f64),
+            5 => Coef::high_shelf(EQ6_FREQS[5], db as f64),
+            _ => Coef::peaking(EQ6_FREQS[band], db as f64, EQ6_Q),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        for b in self.bands.iter_mut() {
+            b.z = [[0.0; 2]; CHANNELS];
+        }
+    }
+
+    #[cfg(test)]
+    pub fn current_gains(&self) -> [f32; 6] {
+        self.cur
+    }
+
+    // Bypass glides every band to 0 dB; the target gains themselves are left untouched by the caller.
+    pub fn process(&mut self, buf: &mut [f32], gains: &[f32; 6], enabled: bool) {
+        for (i, &g) in gains.iter().enumerate() {
+            let target = if enabled && g.is_finite() { g.clamp(-EQ6_MAX_DB, EQ6_MAX_DB) } else { 0.0 };
+            let cur = self.cur[i];
+            if cur != target {
+                let next = if (target - cur).abs() <= EQ6_GLIDE_DB { target } else { cur + EQ6_GLIDE_DB.copysign(target - cur) };
+                self.cur[i] = next;
+                self.bands[i].set(Self::coef(i, next), next);
+            }
+        }
+        if !self.bands.iter().any(|b| b.on) {
+            return;
+        }
+        for frame in buf.chunks_exact_mut(CHANNELS) {
+            for (ch, s) in frame.iter_mut().enumerate() {
+                let mut x = *s;
+                for b in self.bands.iter_mut() {
+                    if b.on {
+                        x = b.tick(ch, x);
+                    }
+                }
+                *s = x;
+            }
+        }
+        for b in self.bands.iter_mut() {
+            b.flush_denormals();
+        }
+    }
+}
+
+impl Default for Eq6 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Tone {
     bands: [Band; 4],
     last: [f32; 4],
@@ -333,6 +406,8 @@ pub struct DspParams {
     pub mode: u8,
     pub phase: bool,
     pub silenced: bool,
+    pub eq6_on: bool,
+    pub eq6: [f32; 6],
 }
 
 impl Default for DspParams {
@@ -358,12 +433,15 @@ impl Default for DspParams {
             mode: 0,
             phase: false,
             silenced: false,
+            eq6_on: true,
+            eq6: [0.0; 6],
         }
     }
 }
 
 pub struct ChannelDsp {
     eq: Eq3,
+    eq6: Eq6,
     tone: Tone,
     gate: Gate,
     comp: Comp,
@@ -380,6 +458,7 @@ impl ChannelDsp {
     pub fn new() -> Self {
         Self {
             eq: Eq3::new(),
+            eq6: Eq6::new(),
             tone: Tone::new(),
             gate: Gate::new(),
             comp: Comp::new(),
@@ -395,6 +474,7 @@ impl ChannelDsp {
 
     pub fn reset(&mut self) {
         self.eq.reset();
+        self.eq6.reset();
         self.tone.reset();
         self.gate.reset();
         self.comp.reset();
@@ -410,6 +490,7 @@ impl ChannelDsp {
         self.eq.process(buf);
         self.tone.set(p.bass_db, p.presence_db, p.loudness);
         self.tone.process(buf);
+        self.eq6.process(buf, &p.eq6, p.eq6_on);
         if p.comp_on {
             self.comp.process(buf, p.comp_thresh_db, p.comp_ratio, p.comp_makeup_db);
         } else if self.comp.env != 0.0 {
@@ -633,6 +714,101 @@ mod tests {
             last = b[239];
         }
         assert!((last - 1.995).abs() < 0.05, "gain DC = {last}");
+    }
+
+    fn sine_block(freq: f32, start: usize, amp: f32) -> [f32; 240] {
+        let mut b = [0.0f32; 240];
+        for (i, f) in b.chunks_exact_mut(2).enumerate() {
+            let v = amp * (2.0 * std::f32::consts::PI * freq * (start + i) as f32 / SAMPLE_RATE as f32).sin();
+            f[0] = v;
+            f[1] = v;
+        }
+        b
+    }
+
+    fn peak(b: &[f32]) -> f32 {
+        b.iter().fold(0.0f32, |m, x| m.max(x.abs()))
+    }
+
+    // Steady-state gain at `freq` once the glide has settled.
+    fn eq6_gain_db(gains: [f32; 6], enabled: bool, freq: f32) -> f32 {
+        let mut eq = Eq6::new();
+        let mut out = 0.0f32;
+        for k in 0..800 {
+            let mut b = sine_block(freq, k * 120, 0.1);
+            eq.process(&mut b, &gains, enabled);
+            if k >= 700 {
+                out = out.max(peak(&b));
+            }
+        }
+        20.0 * (out / 0.1).log10()
+    }
+
+    #[test]
+    fn eq6_bands_hit_their_frequencies() {
+        let mut g = [0.0; 6];
+        g[0] = 6.0;
+        assert!((eq6_gain_db(g, true, 30.0) - 6.0).abs() < 0.6, "low shelf");
+        let mut g = [0.0; 6];
+        g[3] = 6.0;
+        assert!((eq6_gain_db(g, true, 1000.0) - 6.0).abs() < 0.3, "peak at 1 kHz");
+        assert!(eq6_gain_db(g, true, 60.0).abs() < 0.5, "1 kHz band leaves 60 Hz alone");
+        let mut g = [0.0; 6];
+        g[5] = -6.0;
+        assert!((eq6_gain_db(g, true, 20000.0) + 6.0).abs() < 1.0, "high shelf");
+    }
+
+    #[test]
+    fn eq6_bypass_is_flat_but_keeps_the_curve() {
+        let g = [6.5, 4.5, 1.0, 0.0, 0.0, 0.0];
+        assert!(eq6_gain_db(g, false, 60.0).abs() < 0.05);
+        let mut eq = Eq6::new();
+        let mut b = sine_block(440.0, 0, 0.1);
+        let c = b;
+        eq.process(&mut b, &g, false);
+        assert_eq!(b, c, "disabled and flat: samples untouched");
+        assert_eq!(eq.current_gains(), [0.0; 6]);
+    }
+
+    #[test]
+    fn eq6_gain_jumps_glide_without_clicks() {
+        let mut eq = Eq6::new();
+        let mut prev_peak = 0.0f32;
+        let mut worst_step = 0.0f32;
+        let mut prev_sample = 0.0f32;
+        for k in 0..400 {
+            let gains = if k < 50 { [0.0; 6] } else { [0.0, 0.0, 0.0, 12.0, 0.0, 0.0] };
+            let mut b = sine_block(1000.0, k * 120, 0.05);
+            eq.process(&mut b, &gains, true);
+            let p = peak(&b);
+            if k > 50 && prev_peak > 0.0 {
+                worst_step = worst_step.max(20.0 * (p / prev_peak).log10());
+            }
+            for f in b.chunks_exact(2) {
+                assert!((f[0] - prev_sample).abs() < 0.2, "discontinuité de {:.3}", (f[0] - prev_sample).abs());
+                prev_sample = f[0];
+            }
+            prev_peak = p;
+        }
+        assert!(worst_step < 0.5, "pas de {worst_step:.2} dB entre deux blocs");
+        assert_eq!(eq.current_gains()[3], 12.0);
+    }
+
+    #[test]
+    fn eq6_instances_are_independent() {
+        let (mut a, mut b) = (ChannelDsp::new(), ChannelDsp::new());
+        let pa = DspParams { eq6: [6.0, 0.0, 0.0, 0.0, 0.0, 0.0], ..Default::default() };
+        let pb = DspParams::default();
+        let mut ob = [0.0f32; 240];
+        for k in 0..600 {
+            let mut xa = sine_block(60.0, k * 120, 0.1);
+            let mut xb = xa;
+            a.process(&mut xa, &pa);
+            b.process(&mut xb, &pb);
+            ob = xb;
+        }
+        let input = sine_block(60.0, 599 * 120, 0.1);
+        assert_eq!(ob, input, "le réglage de A ne touche pas B");
     }
 
     #[test]

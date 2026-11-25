@@ -4,7 +4,7 @@ const base = (over: Partial<ChannelParams> = {}): ChannelParams => ({
   gainDb: 0, volumeDb: 0, mute: false, solo: false, lowDb: 0, midDb: 0, highDb: 0,
   pan: 0, mode: 'stereo', phaseInvert: false, delayMs: 0,
   bassDb: 0, presenceDb: 0, loudness: 0, width: 1, compOn: false, compThreshDb: -18, compRatio: 3, compMakeupDb: 0,
-  gateOn: false, gateThreshDb: -55, ...over,
+  gateOn: false, gateThreshDb: -55, eqEnabled: true, eqPreset: 'flat', eqGains: [0, 0, 0, 0, 0, 0], ...over,
 });
 
 const sp = (s: Partial<Speaker> & Pick<Speaker, 'id' | 'name' | 'roomId' | 'protocol'>): Speaker => ({
@@ -93,6 +93,19 @@ export async function mockInvoke(cmd: string, a: Record<string, any> = {}): Prom
       const pc = spk('native-pc2'); if (pc) pc.params.delayMs = 258;
       return { report: { grouped: sonos.length > 1 ? sonos.map((s) => s.name) : [], delayed: [['Office PC', 258]], ungrouped: [] }, state: snap() };
     }
+    case 'media_state': {
+      const now = Date.now();
+      if (media.playing) media.pos = Math.min(media.dur, media.pos + (now - media.at));
+      media.at = now;
+      return { available: true, app: 'Spotify', title: 'Midnight City', artist: 'M83', playing: media.playing, positionMs: media.pos, durationMs: media.dur, canSeek: true, canNext: true, canPrevious: true };
+    }
+    case 'media_command': {
+      if (a.cmd === 'toggle') media.playing = !media.playing;
+      if (a.cmd === 'seek') media.pos = a.positionMs ?? 0;
+      if (a.cmd === 'next' || a.cmd === 'previous') media.pos = 0;
+      media.at = Date.now();
+      return null;
+    }
     case 'check_update': return { current: '0.2.0', latest: '0.3.0', available: true, page: 'https://github.com/theappstore-cell/Rezo/releases/latest', asset: 'Rezo-0.3.0-windows-x64-portable.exe', size: 8_400_000, canInstall: true, folder: 'C:\\Rezo' };
     case 'install_update': {
       let received = 0;
@@ -136,6 +149,7 @@ export async function mockInvoke(cmd: string, a: Record<string, any> = {}): Prom
 }
 
 type Listener = (payload: any) => void;
+const media = { playing: true, pos: 61_000, dur: 243_000, at: Date.now() };
 const listeners: Record<string, Set<Listener>> = {};
 
 export function mockListen(event: string, cb: Listener): () => void {

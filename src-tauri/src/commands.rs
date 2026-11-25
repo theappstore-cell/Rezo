@@ -94,6 +94,16 @@ pub async fn sync_speakers(engine: Eng<'_>) -> Res<SyncReply> {
 }
 
 #[tauri::command]
+pub async fn media_state() -> Res<crate::media::MediaState> {
+    tauri::async_runtime::spawn_blocking(crate::media::state).await.map_err(e2s)?.map_err(e2s)
+}
+
+#[tauri::command]
+pub async fn media_command(cmd: String, position_ms: Option<u64>) -> Res<()> {
+    tauri::async_runtime::spawn_blocking(move || crate::media::command(&cmd, position_ms)).await.map_err(e2s)?.map_err(e2s)
+}
+
+#[tauri::command]
 pub async fn check_update() -> Res<crate::updater::UpdateInfo> {
     crate::updater::check().await.map_err(e2s)
 }

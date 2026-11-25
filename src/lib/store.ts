@@ -49,7 +49,11 @@ interface Store {
   moveSpeaker: (id: string, roomId: string) => void;
 }
 
+const isView = (v: string | null): v is ViewId => v === 'rooms' || v === 'plan' || v === 'console';
+
 const savedView = (): ViewId => {
+  const h = location.hash.replace('#', '');
+  if (isView(h)) return h;
   const q = new URLSearchParams(location.search).get('view');
   if (q === 'plan' || q === 'console' || q === 'rooms') return q;
   try {
@@ -72,7 +76,12 @@ export const useStore = create<Store>((set, get) => {
     loadMidiMap(get().s?.midiMap ?? []);
     await on<FullState>('state', (st) => get().apply(st));
     await on<Meters>('meters', pushMeters);
-    void api.setWindowMode(get().view === 'console');
+    // Tabs behave like routes of a single-page app: the address follows the tab and Back/Forward switch tabs.
+    if (location.hash.replace('#', '') !== get().view) history.replaceState(null, '', `#${get().view}`);
+    window.addEventListener('hashchange', () => {
+      const h = location.hash.replace('#', '');
+      if (isView(h) && h !== get().view) get().setView(h);
+    });
   },
 
   apply(next) {
@@ -103,7 +112,7 @@ export const useStore = create<Store>((set, get) => {
   setView(v) {
     try { localStorage.setItem('rezo.view', v); } catch {}
     set({ view: v });
-    void api.setWindowMode(v === 'console');
+    if (location.hash !== `#${v}`) location.hash = v;
   },
 
   say(msg) {

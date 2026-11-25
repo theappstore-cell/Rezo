@@ -163,6 +163,7 @@ pub struct Engine {
     stopping: Mutex<HashSet<String>>,
     last_restart: Mutex<HashMap<String, Instant>>,
     volume_pending: Mutex<HashMap<String, u32>>,
+    persist_notify: tokio::sync::Notify,
     stats_on: bool,
 }
 
@@ -247,6 +248,7 @@ impl Engine {
             stopping: Mutex::new(HashSet::new()),
             last_restart: Mutex::new(HashMap::new()),
             volume_pending: Mutex::new(HashMap::new()),
+            persist_notify: tokio::sync::Notify::new(),
             stats_on: std::env::var_os("REZO_STATS").is_some(),
         })
     }
@@ -270,7 +272,17 @@ impl Engine {
             tauri::async_runtime::spawn(me.clone().watchdog_loop());
             tauri::async_runtime::spawn(me.clone().output_guard_loop());
             tauri::async_runtime::spawn(me.clone().volume_loop());
+            tauri::async_runtime::spawn(me.clone().persist_loop());
         });
+    }
+
+    // Parameter edits (a dragged fader or EQ point) reach the disk 300 ms after the last change.
+    async fn persist_loop(self: Arc<Self>) {
+        loop {
+            self.persist_notify.notified().await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            self.store.flush();
+        }
     }
 
     pub fn preroll_chunks(&self) -> u32 {
@@ -537,6 +549,7 @@ impl Engine {
         if key == "delayMs" {
             self.ensure_delay_capacity();
         }
+        self.persist_notify.notify_one();
         Ok(())
     }
 

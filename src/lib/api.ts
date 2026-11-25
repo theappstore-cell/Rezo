@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { mockInvoke, mockListen, startMockMeters } from './mock';
-import type { AudioApp, FullState, Meters, MidiBinding, MixerState, ReceiverInfo, Settings, Source, SyncReport, UpdateInfo } from './types';
+import type { AudioApp, FullState, Meters, MidiBinding, MixerState, ReceiverInfo, MediaState, Settings, Source, SyncReport, UpdateInfo } from './types';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -31,6 +31,8 @@ export const api = {
   setDeviceVolume: (id: string, volume: number) => call<void>('set_device_volume', { id, volume }),
   setUseLineIn: (id: string, on: boolean) => call<FullState>('set_use_line_in', { id, on }),
   syncSpeakers: () => call<{ report: SyncReport; state: FullState }>('sync_speakers'),
+  mediaState: () => call<MediaState>('media_state'),
+  mediaCommand: (cmd: 'toggle' | 'next' | 'previous' | 'seek', positionMs?: number) => call<void>('media_command', { cmd, positionMs }),
   checkUpdate: () => call<UpdateInfo>('check_update'),
   installUpdate: () => call<void>('install_update'),
   openReleasePage: () => call<void>('open_release_page'),

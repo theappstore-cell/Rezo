@@ -16,12 +16,13 @@ Rezo sends what your computer is playing to the speakers around your home, all a
   - Sonos and UPnP/DLNA renderers, fed with a continuous 48 kHz WAV stream over HTTP.
   - Native receivers over UDP/RTP with Opus in low-delay mode (`tools/rezo-recv`), for the lowest latency.
   - Any phone or tablet: scan a QR code, the browser becomes a speaker (WebSocket + AudioWorklet).
-- **Per-speaker processing**: gain, 3-band EQ, bass boost, presence, loudness, stereo width, compressor, noise gate, pan, channel mode, phase invert, delay from -500 to +500 ms, limiter.
+- **Per-speaker processing**: gain, 3-band tone EQ, a six-band equalizer with 20 presets and a draggable curve (60 Hz to 15 kHz, ±12 dB, bypass that keeps the curve), bass boost, presence, loudness, stereo width, compressor, noise gate, pan, channel mode, phase invert, delay from -500 to +500 ms, limiter.
 - **Speaker volume**: a second fader on each Console strip sets the speaker's own volume (the one the Sonos app shows) or the receiver's output level.
 - **Sync**: one button groups the active Sonos speakers the way the Sonos app does, so they play sample-aligned, and delays the other speakers to play with them.
 - **Sonos line-in**: for games, a Sonos with a line-in (Five, Port, Amp) can play the PC through a cable, the lowest delay a Sonos offers; Sync groups the other Sonos with it.
 - **Rooms and scenes**: group speakers into rooms, save complete mixes and recall them in one click.
-- **Views**: Rooms (compact tray popover), Map (drag speakers between rooms), Console (mixing desk with MIDI Learn).
+- **Views**: Rooms, Map (drag speakers between rooms) and Console (mixing desk with MIDI Learn), as tabs of one window that adapts to its width, down to 360 px.
+- **Media controls** (Windows): play/pause, previous, next and a seek bar for whatever the PC is playing (Spotify, a browser, a media player).
 - **Audio mixer window**: volume and mute for each PC output (wired, Bluetooth, HDMI, USB) and each application, and switching the default output.
 - **Smart Output** (optional): mutes the PC output while network speakers play and restores that exact output afterwards.
 - **French and English** interface, switchable in Settings.

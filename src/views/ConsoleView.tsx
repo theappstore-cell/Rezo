@@ -4,11 +4,13 @@ import { useMidiLearn } from '../hooks/useMidiLearn';
 import { roomLabel, speakersOf, useStore } from '../lib/store';
 import { MasterStrip, RoomStrip, SpeakerStrip } from '../components/ChannelStrip';
 import { t } from '../lib/i18n';
+import { useScrollMemory } from '../lib/layout';
 
 export function ConsoleView() {
   const s = useStore((st) => st.s);
   const sync = useStore((st) => st.sync);
   const [syncing, setSyncing] = useState(false);
+  const scroller = useScrollMemory<HTMLDivElement>('console');
   const midi = useMidiLearn();
   if (!s) return null;
   const grouped = s.speakers.some((sp) => sp.syncedTo);
@@ -47,7 +49,7 @@ export function ConsoleView() {
       </div>
 
       <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto overflow-y-auto p-3">
+        <div ref={scroller} className="flex min-w-0 flex-1 gap-2 overflow-x-auto overflow-y-auto p-3">
           {s.speakers.length === 0 && <div className="m-auto text-center text-[13px] text-mute">{t('Aucune enceinte. Ajoutez-en depuis la barre du haut.')}</div>}
           {loose.map((sp) => (
             <SpeakerStrip key={sp.id} sp={sp} />

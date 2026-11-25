@@ -1,6 +1,7 @@
 mod audio;
 mod commands;
 mod engine;
+mod media;
 mod network;
 mod state;
 mod ui;
@@ -119,6 +120,8 @@ pub fn run() {
             commands::check_update,
             commands::install_update,
             commands::open_release_page,
+            commands::media_state,
+            commands::media_command,
             commands::scan_devices,
             commands::add_manual_device,
             commands::rename_speaker,

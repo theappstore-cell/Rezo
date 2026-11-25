@@ -8,6 +8,8 @@ import { isWindows } from '../lib/platform';
 import { useUi } from '../lib/ui';
 import type { AudioApp, ViewId } from '../lib/types';
 import { LedMeter } from './LedMeter';
+import { MediaBar } from './MediaBar';
+import { NARROW_PX, WIDE_HEADER_PX, useWidth } from '../lib/layout';
 import { Slider } from './Slider';
 
 const ZERO_DB = dbToPos(0);
@@ -187,7 +189,7 @@ function Tabs() {
     <nav className="flex gap-1" role="tablist" aria-label={t('Vues')}>
       {TABS.map(({ id, label }) => (
         <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)}
-          className={`border-b-2 px-3 py-2 text-[13.5px] transition-colors ${view === id ? 'border-ink font-semibold' : 'border-transparent text-dim hover:text-ink'}`}>
+          className={`border-b-2 px-2.5 py-2 text-[13.5px] transition-colors min-[480px]:px-3 ${view === id ? 'border-ink font-semibold' : 'border-transparent text-dim hover:text-ink'}`}>
           {t(label)}
         </button>
       ))}
@@ -196,7 +198,10 @@ function Tabs() {
 }
 
 export function TopBar() {
-  const wide = useStore((s) => s.view === 'console');
+  const width = useWidth();
+  const view = useStore((s) => s.view);
+  const wide = width >= WIDE_HEADER_PX;
+  const media = view !== 'console';
 
   if (wide) {
     return (
@@ -207,6 +212,7 @@ export function TopBar() {
           <MasterBlock className="w-56 shrink-0" />
           <div className="min-w-0 flex-1"><SceneBar /></div>
           <Tabs />
+          {media && <div className="self-center"><MediaBar /></div>}
           <div className="self-center"><Actions compact /></div>
         </div>
       </header>
@@ -218,14 +224,17 @@ export function TopBar() {
       <div data-tauri-drag-region className="flex items-center gap-2 px-3 pb-1 pt-2.5">
         <Title />
         <div data-tauri-drag-region className="flex-1 self-stretch" />
-        <Actions compact={false} />
+        <Actions compact={width < NARROW_PX} />
       </div>
-      <div className="grid grid-cols-2 items-end gap-4 px-3 pb-1.5 pt-1">
+      <div className="grid grid-cols-1 items-end gap-2 px-3 pb-1.5 pt-1 min-[420px]:grid-cols-2 min-[420px]:gap-4">
         <SourcePicker />
         <MasterBlock />
       </div>
       <div className="px-3"><SceneBar /></div>
-      <div className="px-2"><Tabs /></div>
+      <div className="flex items-center gap-2 px-2">
+        <div className="shrink-0"><Tabs /></div>
+        {media && <div className="ml-auto flex min-w-0 justify-end pr-1"><MediaBar /></div>}
+      </div>
     </header>
   );
 }

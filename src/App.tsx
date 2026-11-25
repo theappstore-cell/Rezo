@@ -1,7 +1,9 @@
 import { useEffect } from 'react';
 import { AddDeviceModal, RoomEditor, SettingsModal, SpeakerSheet } from './components/Dialogs';
+import { EqualizerModal } from './components/Equalizer';
 import { TopBar } from './components/TopBar';
 import { UpdateBanner } from './components/UpdateBanner';
+import { MediaBar } from './components/MediaBar';
 import { useMidi } from './lib/midi';
 import { useStore } from './lib/store';
 import { t, useLang } from './lib/i18n';
@@ -33,23 +35,26 @@ function Modals() {
     case 'settings': return <SettingsModal />;
     case 'speaker': return <SpeakerSheet id={modal.id} />;
     case 'room': return <RoomEditor id={modal.id} />;
+    case 'eq': return <EqualizerModal id={modal.id} />;
   }
 }
 
 function StatusBar() {
   const s = useStore((st) => st.s);
+  const console = useStore((st) => st.view === 'console');
   if (!s) return null;
   const active = s.speakers.filter((sp) => sp.running).length;
   const streaming = s.speakers.filter((sp) => sp.streaming).length;
   const source = s.source.kind === 'system' ? t('tout le son du PC') : s.source.name;
   return (
-    <footer className="flex shrink-0 items-center gap-4 whitespace-nowrap border-t border-line bg-panel px-3 py-1.5 text-[12px] text-mute">
+    <footer className="flex shrink-0 items-center gap-3 whitespace-nowrap border-t border-line bg-panel px-3 py-1.5 text-[12px] text-mute">
       <span className="flex items-center gap-1.5" title={s.capture.running ? t('Capture : {source}', { source }) : s.capture.error ?? t('Aucune enceinte active : Rezo ne capte rien et laisse les périphériques audio au repos')}>
         <span className="h-[8px] w-[8px] rounded-full" style={{ background: s.capture.running ? "var(--c-ok)" : s.capture.error ? "var(--c-bad)" : "var(--c-border-strong)" }} />
         {s.capture.running ? t('Capture active') : s.capture.error ? t('Capture en erreur') : t('En veille')}
       </span>
-      <span className="num" title={t('{n} reçoivent effectivement le flux', { n: streaming })}>{t(active > 1 ? '{n} enceintes en service' : '{n} enceinte en service', { n: active })}</span>
-      <span className="ml-auto" title={t("Smart Output : coupe la sortie du PC tant qu'une enceinte réseau est active")}>{s.pcMuted ? t('PC coupé') : t('PC audible')}</span>
+      <span className="num max-[620px]:hidden" title={t('{n} reçoivent effectivement le flux', { n: streaming })}>{t(active > 1 ? '{n} enceintes en service' : '{n} enceinte en service', { n: active })}</span>
+      {console ? <div className="flex min-w-0 flex-1 justify-center px-2"><MediaBar wide /></div> : <span className="flex-1" />}
+      <span className="max-[460px]:hidden" title={t("Smart Output : coupe la sortie du PC tant qu'une enceinte réseau est active")}>{s.pcMuted ? t('PC coupé') : t('PC audible')}</span>
       <span className="num text-dim" title={t('Version de Rezo')}>v{s.version}</span>
     </footer>
   );

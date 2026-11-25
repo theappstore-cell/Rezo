@@ -35,7 +35,7 @@ fn ensure_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let win = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("Rezo")
         .inner_size(w, h)
-        .min_inner_size(420.0, 520.0)
+        .min_inner_size(360.0, 480.0)
         .decorations(false)
         .resizable(true)
         .visible(false)

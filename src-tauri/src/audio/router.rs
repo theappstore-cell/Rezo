@@ -37,6 +37,8 @@ pub struct ChannelShared {
     pub gate_thresh_db: AtomicF32,
     pub comp_on: AtomicBool,
     pub gate_on: AtomicBool,
+    pub eq6_on: AtomicBool,
+    pub eq6: [AtomicF32; 6],
     pub room_db: AtomicF32,
     pub mode: AtomicU8,
     pub mute: AtomicBool,
@@ -68,6 +70,8 @@ impl ChannelShared {
             gate_thresh_db: AtomicF32::default(),
             comp_on: AtomicBool::new(false),
             gate_on: AtomicBool::new(false),
+            eq6_on: AtomicBool::new(true),
+            eq6: Default::default(),
             room_db: AtomicF32::default(),
             mode: AtomicU8::new(0),
             mute: AtomicBool::new(false),
@@ -100,6 +104,10 @@ impl ChannelShared {
         self.gate_thresh_db.store(p.gate_thresh_db);
         self.comp_on.store(p.comp_on, Ordering::Relaxed);
         self.gate_on.store(p.gate_on, Ordering::Relaxed);
+        self.eq6_on.store(p.eq_enabled, Ordering::Relaxed);
+        for (a, g) in self.eq6.iter().zip(p.eq_gains) {
+            a.store(g);
+        }
         self.mode.store(p.mode.as_u8(), Ordering::Relaxed);
         self.mute.store(p.mute, Ordering::Relaxed);
         self.solo.store(p.solo, Ordering::Relaxed);
@@ -328,6 +336,8 @@ fn process_block(
             mode: s.mode.load(Ordering::Relaxed),
             phase: s.phase.load(Ordering::Relaxed),
             silenced,
+            eq6_on: s.eq6_on.load(Ordering::Relaxed),
+            eq6: std::array::from_fn(|i| s.eq6[i].load()),
         };
         let delay_frames = (((s.delay_ms.load() - base) * (SAMPLE_RATE as f32 / 1000.0)).round().max(0.0)) as usize;
 

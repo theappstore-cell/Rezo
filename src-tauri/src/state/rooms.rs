@@ -53,6 +53,10 @@ pub struct ChannelParams {
     pub comp_makeup_db: f32,
     pub gate_on: bool,
     pub gate_thresh_db: f32,
+    // Six-band equaliser (60 Hz, 150 Hz, 400 Hz, 1 kHz, 2.4 kHz, 15 kHz); off restores 0 dB but keeps the curve.
+    pub eq_enabled: bool,
+    pub eq_preset: String,
+    pub eq_gains: [f32; 6],
 }
 
 impl Default for ChannelParams {
@@ -79,6 +83,9 @@ impl Default for ChannelParams {
             comp_makeup_db: 0.0,
             gate_on: false,
             gate_thresh_db: -55.0,
+            eq_enabled: true,
+            eq_preset: "flat".into(),
+            eq_gains: [0.0; 6],
         }
     }
 }
@@ -101,6 +108,12 @@ impl ChannelParams {
         self.comp_makeup_db = c(self.comp_makeup_db, 0.0, 12.0);
         self.gate_thresh_db = if self.gate_thresh_db.is_finite() { self.gate_thresh_db.clamp(-80.0, -20.0) } else { -55.0 };
         self.delay_ms = (c(self.delay_ms, -500.0, 500.0) * 10.0).round() / 10.0;
+        for g in self.eq_gains.iter_mut() {
+            *g = (c(*g, -12.0, 12.0) * 10.0).round() / 10.0;
+        }
+        if self.eq_preset.is_empty() || self.eq_preset.len() > 32 {
+            self.eq_preset = "custom".into();
+        }
     }
 
     pub fn set(&mut self, key: &str, v: &serde_json::Value) -> Result<()> {
@@ -127,6 +140,14 @@ impl ChannelParams {
             "compMakeupDb" => self.comp_makeup_db = f()?,
             "gateOn" => self.gate_on = b()?,
             "gateThreshDb" => self.gate_thresh_db = f()?,
+            "eqEnabled" => self.eq_enabled = b()?,
+            "eqPreset" => self.eq_preset = v.as_str().ok_or_else(|| anyhow::anyhow!("texte attendu pour {key}"))?.to_string(),
+            "eqGains" => {
+                let a = v.as_array().filter(|a| a.len() == 6).ok_or_else(|| anyhow::anyhow!("6 gains attendus"))?;
+                for (g, x) in self.eq_gains.iter_mut().zip(a) {
+                    *g = x.as_f64().ok_or_else(|| anyhow::anyhow!("gain invalide"))? as f32;
+                }
+            }
             "mode" => {
                 self.mode = serde_json::from_value(v.clone())
                     .map_err(|_| anyhow::anyhow!("mode invalide"))?
@@ -497,4 +518,23 @@ pub fn new_access_key() -> String {
         out.push_str(&format!("{:016x}", h.finish()));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eq_settings_are_validated_and_survive_a_reload() {
+        let mut p = ChannelParams::default();
+        p.set("eqGains", &serde_json::json!([13.0, -20.0, 1.26, 0.0, -0.04, 2.5])).unwrap();
+        assert_eq!(p.eq_gains, [12.0, -12.0, 1.3, 0.0, -0.0, 2.5]);
+        p.set("eqPreset", &serde_json::json!("custom")).unwrap();
+        p.set("eqEnabled", &serde_json::json!(false)).unwrap();
+        assert!(p.set("eqGains", &serde_json::json!([1.0, 2.0])).is_err());
+        let back: ChannelParams = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back, p);
+        let old: ChannelParams = serde_json::from_str(r#"{"gainDb": 1.0}"#).unwrap();
+        assert!(old.eq_enabled && old.eq_preset == "flat" && old.eq_gains == [0.0; 6], "anciennes configs");
+    }
 }

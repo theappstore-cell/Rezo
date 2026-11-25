@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { useUi } from '../lib/ui';
 import type { Room, Speaker } from '../lib/types';
 import { t } from '../lib/i18n';
+import { useScrollMemory } from '../lib/layout';
 
 interface DragState {
   id: string;
@@ -30,6 +31,7 @@ export function PlanView() {
     return () => clearTimeout(h);
   }, [confirmPrune]);
   const start = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
+  const scroller = useScrollMemory<HTMLDivElement>('plan');
 
   if (!s) return null;
 
@@ -127,7 +129,7 @@ export function PlanView() {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-3">
+    <div ref={scroller} className="h-full overflow-y-auto p-2.5 min-[480px]:p-3">
       {empty.length > 0 && (
         <div className="mb-3 flex items-center gap-2">
           <p className="legend min-w-0 flex-1 truncate">{t('Glissez les enceintes entre les pièces ; le crayon modifie ou supprime une pièce.')}</p>
@@ -138,7 +140,7 @@ export function PlanView() {
           </button>
         </div>
       )}
-      <div className="grid grid-cols-2 gap-3 [@media(min-width:900px)]:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 [@media(min-width:900px)]:grid-cols-3">
         {s.rooms.map((room) => box(room, speakersOf(s, room.id)))}
         {box(null, unassigned)}
         <button type="button" onClick={() => open({ type: 'room' })}

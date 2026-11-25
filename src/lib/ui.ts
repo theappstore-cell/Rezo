@@ -5,6 +5,7 @@ export type ModalState =
   | { type: 'add' }
   | { type: 'settings' }
   | { type: 'speaker'; id: string }
+  | { type: 'eq'; id: string }
   | { type: 'room'; id?: string };
 
 interface UiStore {
