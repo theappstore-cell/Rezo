@@ -48,6 +48,8 @@ pub struct ChannelShared {
     pub room_solo: AtomicBool,
     pub peak_l: AtomicF32,
     pub peak_r: AtomicF32,
+    // Set by "Identify": the router mixes a short two-note chime into this speaker only.
+    pub chime: AtomicBool,
 }
 
 impl ChannelShared {
@@ -81,6 +83,7 @@ impl ChannelShared {
             room_solo: AtomicBool::new(false),
             peak_l: AtomicF32::default(),
             peak_r: AtomicF32::default(),
+            chime: AtomicBool::new(false),
         });
         s.load(p);
         s
@@ -135,6 +138,8 @@ pub struct ChannelRuntime {
     limiter: Limiter,
     quiet_run: u32,
     dirty: bool,
+    // Frame position inside the identification chime while it plays.
+    chime_at: Option<u32>,
 }
 
 impl ChannelRuntime {
@@ -149,6 +154,7 @@ impl ChannelRuntime {
             limiter: Limiter::new(),
             quiet_run: 0,
             dirty: false,
+            chime_at: None,
         })
     }
 
@@ -172,6 +178,7 @@ enum Cmd {
 
 pub struct RouterShared {
     pub master_db: AtomicF32,
+    pub master_mute: AtomicBool,
     pub peak_in_l: AtomicF32,
     pub peak_in_r: AtomicF32,
     pub dropped_blocks: AtomicU64,
@@ -197,6 +204,7 @@ impl Router {
         let (gtx, grx) = bounded::<Garbage>(64);
         let shared = Arc::new(RouterShared {
             master_db: AtomicF32::default(),
+            master_mute: AtomicBool::new(false),
             peak_in_l: AtomicF32::default(),
             peak_in_r: AtomicF32::default(),
             dropped_blocks: AtomicU64::new(0),
@@ -263,7 +271,40 @@ impl Drop for Router {
 
 struct MasterCache {
     db: f32,
+    muted: bool,
     lin: f32,
+}
+
+// "Identify": a soft two-note chime (C6 then G5), about -14 dBFS at its peak, one second long.
+const CHIME_FRAMES: u32 = SAMPLE_RATE;
+
+fn chime_sample(frame: u32) -> f32 {
+    let t = frame as f32 / SAMPLE_RATE as f32;
+    let note = |start: f32, freq: f32| {
+        let dt = t - start;
+        if dt < 0.0 {
+            return 0.0;
+        }
+        let env = (dt / 0.004).min(1.0) * (-dt / 0.13).exp();
+        env * (std::f32::consts::TAU * freq * dt).sin()
+    };
+    0.2 * (note(0.0, 1046.5) + note(0.22, 784.0))
+}
+
+// Adds the chime from `start` into an interleaved stereo block; returns where to continue, or None at the end.
+fn add_chime(buf: &mut [f32; BLOCK_SAMPLES], start: u32) -> Option<u32> {
+    for (i, frame) in buf.chunks_exact_mut(CHANNELS).enumerate() {
+        let n = start + i as u32;
+        if n >= CHIME_FRAMES {
+            return None;
+        }
+        let v = chime_sample(n);
+        for s in frame.iter_mut() {
+            *s += v;
+        }
+    }
+    let next = start + BLOCK_FRAMES as u32;
+    (next < CHIME_FRAMES).then_some(next)
 }
 
 fn process_block(
@@ -276,9 +317,11 @@ fn process_block(
     let silent_in = block.iter().all(|s| *s == 0.0);
     if !silent_in {
         let mdb = sh.master_db.load();
-        if mdb != master.db {
+        let muted = sh.master_mute.load(Ordering::Relaxed);
+        if mdb != master.db || muted != master.muted {
             master.db = mdb;
-            master.lin = db_to_lin(mdb);
+            master.muted = muted;
+            master.lin = if muted { 0.0 } else { db_to_lin(mdb) };
         }
         if master.lin != 1.0 {
             for s in block.iter_mut() {
@@ -301,9 +344,18 @@ fn process_block(
         let soloed = s.solo.load(Ordering::Relaxed) || s.room_solo.load(Ordering::Relaxed);
         let silenced = s.mute.load(Ordering::Relaxed) || s.room_mute.load(Ordering::Relaxed) || (any_solo && !soloed);
 
+        if s.chime.swap(false, Ordering::Relaxed) {
+            ch.chime_at = Some(0);
+        }
         let quiet = silent_in || silenced;
         ch.quiet_run = if quiet { ch.quiet_run.saturating_add(1) } else { 0 };
         sh.total_channel_blocks.fetch_add(1, Ordering::Relaxed);
+        if quiet && ch.quiet_run > ch.tail_blocks() && ch.chime_at.is_some() {
+            work.copy_from_slice(&ZEROS);
+            ch.chime_at = ch.chime_at.and_then(|t| add_chime(work, t));
+            write_block(ch, work, sh);
+            continue;
+        }
         // Silent for longer than the chain's memory (delay line + filter tails): the output is exactly zero.
         if quiet && ch.quiet_run > ch.tail_blocks() {
             if ch.quiet_run == ch.tail_blocks() + 1 {
@@ -344,6 +396,9 @@ fn process_block(
         work.copy_from_slice(block);
         ch.dsp.process(work, &p);
         ch.delay.process(work, delay_frames);
+        if let Some(t) = ch.chime_at {
+            ch.chime_at = add_chime(work, t);
+        }
         let (pl, pr) = ch.limiter.process(work);
         if pl > 0.0 || pr > 0.0 {
             ch.shared.peak_l.fetch_max_pos(pl);
@@ -383,7 +438,7 @@ fn run(rx: Receiver<Cmd>, garbage: Sender<Garbage>, sh: Arc<RouterShared>) {
     let mut channels: Vec<Box<ChannelRuntime>> = Vec::with_capacity(32);
     let mut block = [0.0f32; BLOCK_SAMPLES];
     let mut work = [0.0f32; BLOCK_SAMPLES];
-    let mut master = MasterCache { db: f32::NAN, lin: 1.0 };
+    let mut master = MasterCache { db: f32::NAN, muted: false, lin: 1.0 };
 
     let block_dur = Duration::from_secs_f64(BLOCK_FRAMES as f64 / SAMPLE_RATE as f64);
     let mut next_silence = Instant::now();
@@ -494,6 +549,64 @@ mod tests {
     use super::*;
     use crate::state::rooms::ChannelParams;
 
+    #[test]
+    fn chime_plays_once_on_one_speaker_and_master_mute_silences_the_rest() {
+        let (mut chans, mut cons) = make_channels(2, ChannelParams::default());
+        let sh = RouterShared::test_new();
+        let mut master = MasterCache { db: f32::NAN, muted: false, lin: 1.0 };
+        let mut block = [0.0f32; BLOCK_SAMPLES];
+        let mut work = [0.0f32; BLOCK_SAMPLES];
+        // Long silence first, so both channels are on the zero-output shortcut.
+        for _ in 0..200 {
+            process_block(&mut chans, &mut block, &mut work, &sh, &mut master);
+            for c in cons.iter_mut() {
+                let n = c.slots();
+                c.read_chunk(n).unwrap().commit_all();
+            }
+        }
+        chans[1].shared.chime.store(true, Ordering::Relaxed);
+        let blocks = CHIME_FRAMES as usize / BLOCK_FRAMES + 3;
+        let (mut peak0, mut peak1, mut tail) = (0.0f32, 0.0f32, 0.0f32);
+        for b in 0..blocks {
+            process_block(&mut chans, &mut block, &mut work, &sh, &mut master);
+            let read = |c: &mut Consumer<f32>| {
+                let n = c.slots();
+                let ch = c.read_chunk(n).unwrap();
+                let (a, b2) = ch.as_slices();
+                let m = a.iter().chain(b2).fold(0.0f32, |m, v| m.max(v.abs()));
+                ch.commit_all();
+                m
+            };
+            peak0 = peak0.max(read(&mut cons[0]));
+            let p1 = read(&mut cons[1]);
+            peak1 = peak1.max(p1);
+            if b == blocks - 1 {
+                tail = p1;
+            }
+        }
+        assert_eq!(peak0, 0.0, "the other speaker stays silent");
+        assert!(peak1 > 0.1 && peak1 < 0.35, "chime level {peak1}");
+        assert_eq!(tail, 0.0, "the chime ends by itself");
+        assert!(chans[1].chime_at.is_none());
+
+        // Master mute: music in, nothing out.
+        sh.master_mute.store(true, Ordering::Relaxed);
+        block.iter_mut().enumerate().for_each(|(i, s)| *s = ((i as f32) * 0.05).sin() * 0.5);
+        let mut out = 0.0f32;
+        for _ in 0..60 {
+            let mut b = block;
+            process_block(&mut chans, &mut b, &mut work, &sh, &mut master);
+            for c in cons.iter_mut() {
+                let n = c.slots();
+                let ch = c.read_chunk(n).unwrap();
+                let (a, b2) = ch.as_slices();
+                out = out.max(a.iter().chain(b2).fold(0.0f32, |m, v| m.max(v.abs())));
+                ch.commit_all();
+            }
+        }
+        assert_eq!(out, 0.0, "master mute silences every speaker");
+    }
+
     fn make_channels(n: usize, params: ChannelParams) -> (Vec<Box<ChannelRuntime>>, Vec<Consumer<f32>>) {
         let mut chans = vec![];
         let mut cons = vec![];
@@ -533,11 +646,11 @@ mod tests {
         p.delay_ms = 30.0;
         let (mut chans, mut cons) = make_channels(1, p);
         let sh = RouterShared::test_new();
-        let mut master = MasterCache { db: f32::NAN, lin: 1.0 };
+        let mut master = MasterCache { db: f32::NAN, muted: false, lin: 1.0 };
         let (mut block, mut work, mut phase) = ([0.0f32; BLOCK_SAMPLES], [0.0f32; BLOCK_SAMPLES], 0.0f32);
 
         let (mut refs, mut rcons) = make_channels(1, ChannelParams { low_db: 4.0, high_db: -3.0, delay_ms: 30.0, ..Default::default() });
-        let mut master_ref = MasterCache { db: f32::NAN, lin: 1.0 };
+        let mut master_ref = MasterCache { db: f32::NAN, muted: false, lin: 1.0 };
         let mut max_diff = 0.0f32;
         let mut saw_quiet = false;
         for i in 0..(400 * 4) {
@@ -588,7 +701,7 @@ mod tests {
             p.delay_ms = delay;
             let (mut chans, mut cons) = make_channels(4, p);
             let sh = RouterShared::test_new();
-            let mut master = MasterCache { db: f32::NAN, lin: 1.0 };
+            let mut master = MasterCache { db: f32::NAN, muted: false, lin: 1.0 };
             let (mut block, mut work, mut phase) = ([0.0f32; BLOCK_SAMPLES], [0.0f32; BLOCK_SAMPLES], 0.0f32);
             let n = 100_000u32;
             let mut total = Duration::ZERO;
@@ -621,6 +734,7 @@ impl RouterShared {
     pub fn test_new() -> RouterShared {
         RouterShared {
             master_db: AtomicF32::default(),
+            master_mute: AtomicBool::new(false),
             peak_in_l: AtomicF32::default(),
             peak_in_r: AtomicF32::default(),
             dropped_blocks: AtomicU64::new(0),

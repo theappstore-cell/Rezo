@@ -1,5 +1,6 @@
 pub mod discovery;
 pub mod http_server;
+pub mod ping;
 pub mod sonos_upnp;
 pub mod udp_streamer;
 pub mod web_receiver;

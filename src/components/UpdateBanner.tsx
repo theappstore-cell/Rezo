@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Download, X } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { ChevronDown, Download, X } from 'lucide-react';
 import { api, on } from '../lib/api';
 import { useStore } from '../lib/store';
 import { t } from '../lib/i18n';
@@ -24,6 +25,52 @@ function dismissed(version: string): boolean {
   }
 }
 
+// **bold**, `code` and [links](…) of the release notes, as plain React text (links show their label only).
+function inline(text: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  const re = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\([^)]*\)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m[1]) out.push(<b key={m.index}>{m[1]}</b>);
+    else if (m[2]) out.push(<code key={m.index} className="rounded bg-inset px-1 font-mono text-[11px]">{m[2]}</code>);
+    else out.push(m[3]);
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+// The release notes (Markdown headings, bullets and paragraphs) of the new version.
+export function ReleaseNotes({ text }: { text: string }) {
+  const blocks: ReactNode[] = [];
+  let items: string[] = [];
+  const flush = () => {
+    if (items.length) {
+      const list = items;
+      blocks.push(<ul key={blocks.length} className="ml-4 list-disc space-y-0.5">{list.map((it, i) => <li key={i}>{inline(it)}</li>)}</ul>);
+      items = [];
+    }
+  };
+  for (const raw of text.split('\n')) {
+    const line = raw.trimEnd();
+    const h = /^#{1,6}\s+(.*)$/.exec(line);
+    const li = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (h) {
+      flush();
+      blocks.push(<div key={blocks.length} className="mt-1.5 font-semibold first:mt-0">{inline(h[1])}</div>);
+    } else if (li) items.push(li[1]);
+    else if (!line.trim()) flush();
+    else {
+      flush();
+      blocks.push(<p key={blocks.length}>{inline(line)}</p>);
+    }
+  }
+  flush();
+  return <div className="space-y-1 text-[12px] leading-snug">{blocks}</div>;
+}
+
 // Shown when GitHub has a newer release; "Install" downloads it into Rezo's own folder, checks it and restarts.
 export function UpdateBanner() {
   const enabled = useStore((s) => s.s?.settings.checkUpdates ?? false);
@@ -31,6 +78,7 @@ export function UpdateBanner() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
 
   useEffect(() => {
     if (!enabled) return;
@@ -97,6 +145,11 @@ export function UpdateBanner() {
       <div className="flex items-center gap-2">
         <Download size={14} className="shrink-0 text-ok" aria-hidden />
         <span className="min-w-0 flex-1 text-[12.5px]">{status}</span>
+        {!busy && !!info.notes && (
+          <button type="button" className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-[12px] text-mute hover:bg-raise hover:text-ink" aria-expanded={showNotes} onClick={() => setShowNotes((v) => !v)}>
+            {t('Nouveautés')} <ChevronDown size={13} className={showNotes ? 'rotate-180' : ''} />
+          </button>
+        )}
         {!busy && info.canInstall && (
           <button type="button" className="key key-primary !h-7 !text-[12px]" onClick={() => void install()} title={t('Téléchargé dans {folder}, vérifié puis installé à la place de la version actuelle.', { folder: info.folder })}>
             {t('Télécharger et installer')}
@@ -113,6 +166,11 @@ export function UpdateBanner() {
           </button>
         )}
       </div>
+      {showNotes && info.notes && (
+        <div className="mt-2 max-h-[220px] overflow-y-auto rounded border border-line bg-panel p-2.5">
+          <ReleaseNotes text={info.notes} />
+        </div>
+      )}
       {progress && (
         <div className="mt-1.5 h-[6px] overflow-hidden rounded-full" style={{ background: 'var(--c-meter-off)' }} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
           <div className="h-full rounded-full bg-ok transition-[width] duration-150" style={{ width: `${progress.stage === 'download' ? pct : 100}%` }} />

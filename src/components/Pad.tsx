@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useMidiControl } from '../hooks/useMidiLearn';
+import { tint } from '../lib/style';
 
 interface Props {
   label: ReactNode;
@@ -21,7 +22,7 @@ export function Pad({ label, on, onToggle, color = 'var(--c-ink)', title, contro
       type="button"
       className={`key !h-[26px] !px-1 !text-[11.5px] ${className}`}
       data-on={on}
-      style={{ ['--c' as string]: color }}
+      style={color === 'var(--c-ink)' ? undefined : tint(color)}
       title={title}
       aria-pressed={on}
       disabled={disabled}

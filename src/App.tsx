@@ -4,6 +4,8 @@ import { EqualizerModal } from './components/Equalizer';
 import { TopBar } from './components/TopBar';
 import { UpdateBanner } from './components/UpdateBanner';
 import { MediaBar } from './components/MediaBar';
+import { ContextMenu } from './components/ContextMenu';
+import { ShortcutsModal, useShortcuts } from './components/Shortcuts';
 import { useMidi } from './lib/midi';
 import { useStore } from './lib/store';
 import { t, useLang } from './lib/i18n';
@@ -16,13 +18,21 @@ function Toast() {
   const toast = useStore((s) => s.toast);
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => useStore.setState({ toast: null }), 4500);
+    const timer = window.setTimeout(() => useStore.setState({ toast: null }), toast.action ? 7000 : 4500);
     return () => window.clearTimeout(timer);
   }, [toast]);
   if (!toast) return null;
   return (
-    <div role="status" className="toast-in pointer-events-none fixed inset-x-0 bottom-10 z-50 flex justify-center px-4">
-      <div className="max-w-[420px] rounded-md bg-ink px-4 py-2.5 text-[13px] text-onsig" style={{ boxShadow: '0 6px 18px rgba(0,0,0,0.3)' }}>{toast}</div>
+    <div role="status" key={toast.id} className="toast-in pointer-events-none fixed inset-x-0 bottom-10 z-50 flex justify-center px-4">
+      <div className="pointer-events-auto flex max-w-[460px] items-center gap-3 rounded-md bg-ink py-2 pl-4 pr-2 text-[13px] text-onsig" style={{ boxShadow: '0 6px 18px rgba(0,0,0,0.3)' }}>
+        <span className="min-w-0 flex-1 py-0.5">{toast.msg}</span>
+        {toast.action && (
+          <button type="button" className="shrink-0 rounded px-2 py-1 text-[12.5px] font-semibold underline-offset-2 hover:underline" style={{ color: 'var(--c-ok)' }}
+            onClick={() => { toast.action!.run(); }}>
+            {toast.action.label}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -36,6 +46,7 @@ function Modals() {
     case 'speaker': return <SpeakerSheet id={modal.id} />;
     case 'room': return <RoomEditor id={modal.id} />;
     case 'eq': return <EqualizerModal id={modal.id} />;
+    case 'shortcuts': return <ShortcutsModal />;
   }
 }
 
@@ -70,6 +81,13 @@ export default function App() {
   useEffect(() => {
     void init();
   }, [init]);
+  useShortcuts();
+  // A widget's settings button opens this window on the Settings dialog.
+  useEffect(() => {
+    const h = () => useUi.getState().open({ type: 'settings' });
+    window.addEventListener('rezo-open-settings', h);
+    return () => window.removeEventListener('rezo-open-settings', h);
+  }, []);
 
   if (!ready) {
     return <div className="grid h-full place-items-center text-[13px] text-mute">{t('Démarrage du moteur audio…')}</div>;
@@ -85,6 +103,7 @@ export default function App() {
       </main>
       <StatusBar />
       <Modals />
+      <ContextMenu />
       <Toast />
     </div>
   );

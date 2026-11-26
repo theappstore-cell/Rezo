@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::audio::sessions::AudioApp;
@@ -34,6 +34,100 @@ pub fn set_room_param(engine: Eng, id: String, key: String, value: Value) -> Res
 #[tauri::command]
 pub fn set_master(engine: Eng, db: f32) {
     engine.set_master(db);
+}
+
+#[tauri::command]
+pub fn set_master_mute(engine: Eng, on: bool) {
+    engine.set_master_mute(on);
+}
+
+#[tauri::command]
+pub async fn identify_speaker(engine: Eng<'_>, id: String) -> Res<()> {
+    let e = engine.inner().clone();
+    e.identify(&id).await.map_err(e2s)
+}
+
+#[tauri::command]
+pub async fn reconnect_speaker(engine: Eng<'_>, id: String) -> Res<FullState> {
+    let e = engine.inner().clone();
+    e.reconnect(&id).await;
+    Ok(e.snapshot())
+}
+
+#[tauri::command]
+pub fn reorder(engine: Eng, speakers: Option<Vec<String>>, rooms: Option<Vec<String>>) {
+    engine.reorder(speakers, rooms);
+}
+
+#[tauri::command]
+pub fn set_speaker_style(engine: Eng, id: String, color: Option<String>, icon: Option<String>) {
+    engine.set_speaker_style(&id, color, icon);
+}
+
+#[tauri::command]
+pub fn set_plan_position(engine: Eng, id: String, x: Option<f32>, y: Option<f32>) {
+    engine.set_plan_position(&id, x.zip(y));
+}
+
+#[tauri::command]
+pub fn get_plan_image(engine: Eng) -> Option<String> {
+    engine.plan_image()
+}
+
+#[tauri::command]
+pub fn set_plan_image(engine: Eng, data: Option<String>) -> Res<()> {
+    engine.set_plan_image(data).map_err(e2s)
+}
+
+#[tauri::command]
+pub fn set_ui_zoom(app: AppHandle, engine: Eng, zoom: f32) -> f32 {
+    let z = engine.set_ui_zoom(zoom);
+    ui::apply_zoom(&app, z);
+    z
+}
+
+// Window-creating commands are async: a synchronous command that builds a webview deadlocks on Windows.
+#[tauri::command]
+pub async fn widget_add(app: AppHandle, engine: Eng<'_>, kind: String) -> Res<FullState> {
+    engine.widget_add(&kind);
+    ui::sync_widgets(&app);
+    Ok(engine.snapshot())
+}
+
+#[tauri::command]
+pub async fn widget_update(app: AppHandle, engine: Eng<'_>, id: String, patch: Value) -> Res<FullState> {
+    engine.widget_update(&id, &patch).map_err(e2s)?;
+    ui::sync_widgets(&app);
+    Ok(engine.snapshot())
+}
+
+#[tauri::command]
+pub async fn widget_remove(app: AppHandle, engine: Eng<'_>, id: String) -> Res<FullState> {
+    engine.widget_remove(&id);
+    ui::sync_widgets(&app);
+    Ok(engine.snapshot())
+}
+
+// Sent by a widget page once it has laid out its content.
+#[tauri::command]
+pub fn widget_fit(app: AppHandle, id: String, width: f64, height: f64) {
+    ui::fit_widget(&app, &id, width, height);
+}
+
+// A widget's settings button: open the main window on the Settings dialog.
+#[tauri::command]
+pub async fn show_settings(app: AppHandle) {
+    let existed = app.get_webview_window("main").is_some();
+    ui::show_main(&app, None);
+    if existed {
+        let _ = app.emit_to("main", "open-settings", ());
+    } else {
+        // The window was just created: give its page time to load and listen.
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            let _ = app.emit_to("main", "open-settings", ());
+        });
+    }
 }
 
 #[tauri::command]
@@ -232,8 +326,9 @@ pub fn set_window_mode(app: AppHandle, wide: bool) {
 }
 
 #[tauri::command]
-pub fn set_pinned(pinned: bool) {
-    ui::set_pinned(pinned);
+pub fn set_pinned(app: AppHandle, engine: Eng, pinned: bool) {
+    engine.set_pinned(pinned);
+    ui::set_pinned(&app, pinned);
 }
 
 #[tauri::command]
@@ -311,9 +406,7 @@ pub async fn mixer_set_default(engine: Eng<'_>, id: String) -> Res<()> {
 pub fn set_language(app: AppHandle, engine: Eng<'_>, lang: String) {
     let lang = if lang == "en" { "en" } else { "fr" }.to_string();
     engine.store.write(|c| c.settings.language = lang.clone());
-    if let (Some(tray), Ok(menu)) = (app.tray_by_id("main"), crate::tray_menu(&app, &lang)) {
-        let _ = tray.set_menu(Some(menu));
-    }
+    crate::tray::refresh(&app, &engine, true);
 }
 
 #[tauri::command]

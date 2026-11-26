@@ -1,6 +1,6 @@
 import {
   BedDouble, Cast, CookingPot, Monitor, Radio, Smartphone, Sofa, Speaker, TreePalm, Wifi,
-  Music2, Bath, Dumbbell, Gamepad2, Car, Baby, Warehouse, Armchair,
+  Music2, Bath, Dumbbell, Gamepad2, Car, Baby, Warehouse, Armchair, Tv, Headphones, Laptop, Volume2, Tablet, AudioLines,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { Protocol, Speaker as Spk } from './types';
@@ -37,3 +37,12 @@ export function protocolBadge(sp: Spk): string {
 }
 
 export const ROOM_COLORS = ['#d9480f', '#5c940d', '#1c7ed6', '#9c36b5', '#c2255c', '#b08900', '#0b7285', '#6b5b4b'];
+
+// Icons a speaker can wear instead of its protocol's.
+export const SPEAKER_ICONS: Record<string, LucideIcon> = {
+  Speaker, Volume2, AudioLines, Radio, Tv, Headphones, Laptop, Monitor, Smartphone, Tablet, Gamepad2, Music2, Car, Cast,
+};
+
+export function speakerIcon(sp: Spk): LucideIcon {
+  return (sp.icon && SPEAKER_ICONS[sp.icon]) || protocolIcon(sp.protocol);
+}

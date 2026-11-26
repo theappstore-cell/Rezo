@@ -1,10 +1,42 @@
 import { useState } from 'react';
+import type { RefObject } from 'react';
 import { Keyboard, Link2, Trash2 } from 'lucide-react';
 import { useMidiLearn } from '../hooks/useMidiLearn';
 import { roomLabel, speakersOf, useStore } from '../lib/store';
 import { MasterStrip, RoomStrip, SpeakerStrip } from '../components/ChannelStrip';
 import { t } from '../lib/i18n';
 import { useScrollMemory } from '../lib/layout';
+import { useReorder } from '../lib/useReorder';
+import type { Room, Speaker } from '../lib/types';
+
+// The strips of one room (or of the speakers without a room), reordered by dragging their grip.
+function StripGroup({ room, members, allIds }: { room?: Room; members: Speaker[]; allIds: string[] }) {
+  const reorderSpeakers = useStore((st) => st.reorderSpeakers);
+  const ids = members.map((m) => m.id);
+  const r = useReorder(ids, 'x', (next) => {
+    const full = [...allIds];
+    const slots = full.map((id, i) => (ids.includes(id) ? i : -1)).filter((i) => i >= 0);
+    slots.forEach((slot, k) => (full[slot] = next[k]));
+    reorderSpeakers(full);
+  });
+  const byId = new Map(members.map((m) => [m.id, m]));
+  return (
+    <div ref={r.container as RefObject<HTMLDivElement>} className={`flex shrink-0 gap-1.5 ${room ? 'border-r border-line pr-2' : ''}`} aria-label={room ? t('Pièce {name}', { name: roomLabel(room) }) : undefined}>
+      {r.order.map((id) => {
+        const sp = byId.get(id);
+        if (!sp) return null;
+        const it = r.item(id);
+        return (
+          <div key={id} data-reorder={it['data-reorder']} className="flex" style={it.style}>
+            <SpeakerStrip sp={sp} room={room} handle={members.length > 1 ? r.handle(id) : undefined} />
+          </div>
+        );
+      })}
+      {room && <RoomStrip room={room} members={members} />}
+    </div>
+  );
+}
+import { tint } from '../lib/style';
 
 export function ConsoleView() {
   const s = useStore((st) => st.s);
@@ -17,6 +49,7 @@ export function ConsoleView() {
   const activeCount = s.speakers.filter((sp) => sp.running).length;
 
   const loose = s.speakers.filter((sp) => !s.rooms.some((r) => r.id === sp.roomId));
+  const allIds = s.speakers.map((sp) => sp.id);
   const groups = s.rooms.map((room) => ({ room, members: speakersOf(s, room.id) })).filter((g) => g.members.length > 0);
 
   return (
@@ -26,7 +59,7 @@ export function ConsoleView() {
           <Keyboard size={14} />
           MIDI Learn
         </button>
-        <button type="button" className="key flex items-center gap-1.5" style={{ ['--c' as string]: 'var(--c-ok)' }} data-on={grouped} aria-pressed={grouped} disabled={syncing || (!grouped && activeCount < 2)}
+        <button type="button" className="key flex items-center gap-1.5" style={tint('var(--c-ok)')} data-on={grouped} aria-pressed={grouped} disabled={syncing || (!grouped && activeCount < 2)}
           onClick={async () => { setSyncing(true); try { await sync(); } finally { setSyncing(false); } }}
           title={grouped
             ? t('Dissoudre le groupe Sonos : chaque enceinte reprend son propre flux.')
@@ -50,17 +83,15 @@ export function ConsoleView() {
 
       <div className="flex min-h-0 flex-1">
         <div ref={scroller} className="flex min-w-0 flex-1 gap-2 overflow-x-auto overflow-y-auto p-3">
-          {s.speakers.length === 0 && <div className="m-auto text-center text-[13px] text-mute">{t('Aucune enceinte. Ajoutez-en depuis la barre du haut.')}</div>}
-          {loose.map((sp) => (
-            <SpeakerStrip key={sp.id} sp={sp} />
-          ))}
-          {groups.map(({ room, members }) => (
-            <div key={room.id} className="flex shrink-0 gap-1.5 border-r border-line pr-2" aria-label={t('Pièce {name}', { name: roomLabel(room) })}>
-              {members.map((sp) => (
-                <SpeakerStrip key={sp.id} sp={sp} room={room} />
-              ))}
-              <RoomStrip room={room} members={members} />
+          {s.speakers.length === 0 && (
+            <div className="m-auto flex flex-col items-center gap-2 text-center text-[13px] text-mute">
+              {t('Aucune enceinte pour le moment.')}
+              <button type="button" className="key key-primary" onClick={() => useStore.getState().setView('rooms')}>{t('Voir comment en trouver')}</button>
             </div>
+          )}
+          {loose.length > 0 && <StripGroup members={loose} allIds={allIds} />}
+          {groups.map(({ room, members }) => (
+            <StripGroup key={room.id} room={room} members={members} allIds={allIds} />
           ))}
         </div>
         <div className="flex shrink-0 border-l border-line p-3">

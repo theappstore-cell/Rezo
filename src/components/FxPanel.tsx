@@ -6,6 +6,7 @@ import { t } from '../lib/i18n';
 import type { Speaker } from '../lib/types';
 import { Pad } from './Pad';
 import { RotaryKnob } from './RotaryKnob';
+import { tint } from '../lib/style';
 
 const W = 236;
 
@@ -52,7 +53,7 @@ export function FxButton({ sp, color }: { sp: Speaker; color: string }) {
   return (
     <>
       <button ref={btn} type="button" className="key !h-[24px] !px-1 !text-[11.5px]" data-on={active} aria-expanded={open} aria-haspopup="dialog"
-        style={{ ['--c' as string]: color }} title={t('Bass, présence, loudness, largeur, compresseur, noise gate')}
+        style={tint(color)} title={t('Bass, présence, loudness, largeur, compresseur, noise gate')}
         onClick={() => setOpen((v) => !v)}>
         {t('Effets')} {open ? '▴' : '▾'}
       </button>

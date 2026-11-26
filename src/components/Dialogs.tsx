@@ -1,9 +1,9 @@
-import { Loader2, QrCode, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { BellRing, ClipboardPaste, Copy, Keyboard, Loader2, Minus, Plus, QrCode, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { api } from '../lib/api';
 import { fmtMs } from '../lib/db';
-import { ROOM_COLORS, ROOM_ICONS, protocolBadge, protocolIcon } from '../lib/icons';
+import { ROOM_COLORS, ROOM_ICONS, SPEAKER_ICONS, protocolBadge, protocolIcon } from '../lib/icons';
 import { roomLabel, useStore } from '../lib/store';
 import { checkNow } from './UpdateBanner';
 import { setLang, t, useLang } from '../lib/i18n';
@@ -12,6 +12,9 @@ import { useUi } from '../lib/ui';
 import type { ChannelMode, ReceiverInfo, Settings } from '../lib/types';
 import { Modal, Toggle } from './Modal';
 import { RotaryKnob } from './RotaryKnob';
+import { NetBars, netText } from './NetBars';
+import { WidgetSettings } from './WidgetSettings';
+import { ZOOM_STEP } from './Shortcuts';
 
 const inputCls = 'field';
 const btnPrimary = 'key key-primary !h-auto !px-3.5 !py-2';
@@ -162,6 +165,12 @@ export function SpeakerSheet({ id }: { id: string }) {
   const setParam = useStore((st) => st.setParam);
   const apply = useStore((st) => st.apply);
   const sp = s?.speakers.find((x) => x.id === id);
+  const identify = useStore((st) => st.identify);
+  const reconnect = useStore((st) => st.reconnect);
+  const copySettings = useStore((st) => st.copySettings);
+  const pasteSettings = useStore((st) => st.pasteSettings);
+  const setStyle = useStore((st) => st.setSpeakerStyle);
+  const copied = useStore((st) => st.copied);
   const [name, setName] = useState(sp?.name ?? '');
   const [confirmDel, setConfirmDel] = useState(false);
   if (!s || !sp) return null;
@@ -174,12 +183,51 @@ export function SpeakerSheet({ id }: { id: string }) {
     }
   };
   const nudge = (d: number) => setParam(sp.id, 'delayMs', Math.max(-500, Math.min(500, Math.round((sp.params.delayMs + d) * 10) / 10)));
+  const roomColor = s.rooms.find((r) => r.id === sp.roomId)?.color ?? 'var(--c-ink3)';
+  const shown = sp.color ?? roomColor;
 
   return (
     <Modal title={t("Réglages de l'enceinte")} onClose={close}>
       <div className="space-y-4">
         <Field label={t('Nom')}>
           <input className={inputCls} value={name} maxLength={60} onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} />
+        </Field>
+
+        <div className="grid grid-cols-3 gap-1.5">
+          <button type="button" className={`${btnGhost} flex items-center justify-center gap-1.5 !px-2 !text-[11.5px]`} disabled={!sp.online && !sp.running}
+            title={t("Joue un petit bip sur cette enceinte seulement, pour la reconnaître. Éteinte, elle s'allume le temps du bip.")} onClick={() => void identify(sp.id)}>
+            <BellRing size={13} /> {t('Identifier')}
+          </button>
+          <button type="button" className={`${btnGhost} flex items-center justify-center gap-1.5 !px-2 !text-[11.5px]`} title={t('Copier égaliseur, effets, tonalité et retard')} onClick={() => copySettings(sp.id)}>
+            <Copy size={13} /> {t('Copier')}
+          </button>
+          <button type="button" className={`${btnGhost} flex items-center justify-center gap-1.5 !px-2 !text-[11.5px]`} disabled={!copied || copied.from === sp.id}
+            title={copied ? t('Coller les réglages de {name}', { name: copied.name }) : t('Copiez d’abord les réglages d’une autre enceinte')} onClick={() => pasteSettings([sp.id])}>
+            <ClipboardPaste size={13} /> {t('Coller')}
+          </button>
+        </div>
+
+        <Field label={t('Apparence')}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button type="button" aria-pressed={!sp.color} onClick={() => setStyle(sp.id, { color: '' })} title={t('Couleur de la pièce')}
+              className="h-7 rounded-[2px] border-2 px-2 text-[11px]" style={{ borderColor: !sp.color ? 'var(--c-ink)' : 'var(--c-border)', background: `${roomColor}22` }}>{t('Pièce')}</button>
+            {ROOM_COLORS.map((c) => (
+              <button key={c} type="button" aria-label={c} aria-pressed={sp.color === c} onClick={() => setStyle(sp.id, { color: c })}
+                className="h-7 w-7 rounded-[2px] border-2" style={{ background: c, borderColor: sp.color === c ? 'var(--c-ink)' : 'transparent' }} />
+            ))}
+          </div>
+          <div className="mt-2 grid grid-cols-7 gap-1.5">
+            {Object.entries(SPEAKER_ICONS).map(([key, Icon]) => {
+              const on = sp.icon === key;
+              return (
+                <button key={key} type="button" aria-label={key} aria-pressed={on} onClick={() => setStyle(sp.id, { icon: on ? '' : key })}
+                  className="grid h-8 place-items-center rounded-[2px] border"
+                  style={{ borderColor: on ? shown : 'var(--c-border)', background: on ? `${shown}22` : 'transparent', color: on ? shown : 'var(--c-ink3)' }}>
+                  <Icon size={15} />
+                </button>
+              );
+            })}
+          </div>
         </Field>
 
         <Field label={t('Pièce')}>
@@ -226,6 +274,31 @@ export function SpeakerSheet({ id }: { id: string }) {
             {t('Un retard négatif retarde les autres enceintes (on ne peut pas « avancer » un flux temps réel).')}
             {sp.protocol === 'sonos' && ` ${t('Une Sonos garde environ 0,3 s de tampon : le bouton Sync de la Console aligne les autres enceintes sur elle.')}`}
           </p>
+        </Field>
+
+        <Field label={t('Réseau')}>
+          <div className="space-y-2 rounded-[2px] border border-line bg-panel2 p-3 text-[12px]">
+            <div className="flex items-center gap-2">
+              <NetBars sp={sp} />
+              <span className="min-w-0 flex-1 leading-snug">{netText(sp)}</span>
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-mute">
+              <span>{t('Latence estimée')} : <b className="num text-ink">{sp.latencyMs ? `${sp.latencyMs} ms` : '—'}</b></span>
+              <span>{t('État')} : <b className="text-ink">{sp.streaming ? t('reçoit le flux') : sp.running ? t('démarrage…') : sp.online ? t('en ligne, éteinte') : t('hors ligne')}</b></span>
+            </div>
+            {sp.error && <div className="rounded border border-bad/50 bg-bad/10 px-2 py-1 text-[11.5px] text-bad">{sp.error}</div>}
+            <div className="flex gap-1.5">
+              <button type="button" className={`${btnGhost} flex flex-1 items-center justify-center gap-1.5 !py-1.5 !text-[11.5px]`} disabled={!sp.active} onClick={() => void reconnect(sp.id)}
+                title={t('Arrête puis relance le flux de cette enceinte')}>
+                <RefreshCw size={12} /> {t('Reconnecter')}
+              </button>
+              {!sp.online && (
+                <button type="button" className={`${btnGhost} flex flex-1 items-center justify-center gap-1.5 !py-1.5 !text-[11.5px]`} onClick={() => void useStore.getState().scan()}>
+                  <Search size={12} /> {t('Relancer la recherche')}
+                </button>
+              )}
+            </div>
+          </div>
         </Field>
 
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-[2px] bg-inset p-3 font-mono text-[10.5px] text-mute">
@@ -292,7 +365,7 @@ export function RoomEditor({ id }: { id?: string }) {
         <div className="flex gap-2">
           <button type="button" className={`${btnPrimary} flex-1`} disabled={!name.trim()} onClick={() => void save()}>{id ? t('Enregistrer') : t('Créer')}</button>
           {id && (confirmDel ? (
-            <button type="button" className="rounded-[2px] bg-bad px-3.5 py-2 text-[12px] font-semibold text-white" onClick={async () => { await api.deleteRoom(id); useStore.getState().apply(await api.getState()); close(); }}>{t('Supprimer ?')}</button>
+            <button type="button" className="rounded-[2px] bg-bad px-3.5 py-2 text-[12px] font-semibold text-white" onClick={async () => { close(); await useStore.getState().deleteRooms([id]); }}>{t('Supprimer ?')}</button>
           ) : (
             <button type="button" aria-label={t('Supprimer la pièce')} className={`${btnGhost} text-bad`} onClick={() => setConfirmDel(true)}><Trash2 size={14} /></button>
           ))}
@@ -309,6 +382,8 @@ export function SettingsModal() {
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const lang = useLang((l) => l.lang);
+  const setZoom = useStore((st) => st.setZoom);
+  const open = useUi((u) => u.open);
 
   useEffect(() => {
     api.getAutostart().then(setAutostart).catch(() => setAutostart(false));
@@ -328,7 +403,7 @@ export function SettingsModal() {
   );
 
   return (
-    <Modal title={t('Réglages')} onClose={close}>
+    <Modal title={t('Réglages')} onClose={close} width={470}>
       <div className="divide-y divide-line">
         <Row title={t('Langue')} hint={t("Langue de l'interface et du menu de la zone de notification.")}>
           <div className="flex gap-1" role="group" aria-label={t('Langue')}>
@@ -336,6 +411,17 @@ export function SettingsModal() {
             <button type="button" className="key !h-[26px]" data-on={lang === 'en'} aria-pressed={lang === 'en'} onClick={() => setLang('en')}>English</button>
           </div>
         </Row>
+        <Row title={t("Taille de l'interface")} hint={t('Aussi avec Ctrl++, Ctrl+− et Ctrl+0.')}>
+          <div className="flex shrink-0 items-center gap-1">
+            <button type="button" className="key key-icon grid !h-[26px] !w-[26px] place-items-center" aria-label={t('Réduire')} disabled={s.uiZoom <= 0.7} onClick={() => void setZoom(s.uiZoom - ZOOM_STEP)}><Minus size={13} /></button>
+            <button type="button" className="key num !h-[26px] w-[58px] !px-1 !text-[11.5px]" title={t('Revenir à 100 %')} onClick={() => void setZoom(1)}>{Math.round(s.uiZoom * 100)} %</button>
+            <button type="button" className="key key-icon grid !h-[26px] !w-[26px] place-items-center" aria-label={t('Agrandir')} disabled={s.uiZoom >= 1.6} onClick={() => void setZoom(s.uiZoom + ZOOM_STEP)}><Plus size={13} /></button>
+          </div>
+        </Row>
+        <Row title={t('Raccourcis clavier')} hint={t('Ctrl+Z pour annuler, Espace pour lecture/pause, M pour couper le son… Touche ? pour la liste.')}>
+          <button type="button" className="key flex shrink-0 items-center gap-1.5 !h-[26px] !text-[11.5px]" onClick={() => open({ type: 'shortcuts' })}><Keyboard size={13} /> {t('Voir')}</button>
+        </Row>
+        <WidgetSettings />
         <Row title={t('Mises à jour')} hint={updateMsg ?? t('Au lancement puis toutes les 6 h, Rezo regarde sur GitHub si une nouvelle version est publiée. Le téléchargement est vérifié avec la somme SHA-256 de la version avant d\'être installé.')}>
           <div className="flex shrink-0 items-center gap-2">
             <button type="button" className="key !h-[26px] !text-[11.5px]" onClick={async () => { setUpdateMsg(t('Vérification…')); setUpdateMsg(await checkNow()); }}>{t('Vérifier')}</button>

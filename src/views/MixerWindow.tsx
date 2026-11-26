@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { api } from '../lib/api';
 import { t } from '../lib/i18n';
 import type { DeviceKind, MixerApp, MixerDevice, MixerState } from '../lib/types';
+import { tint } from '../lib/style';
 
 const POLL_MS = 1000;
 const HOLD_MS = 1200;
@@ -37,7 +38,7 @@ function VolumeRow({ label, value, mute, onVolume, onMute, disabled }: {
   return (
     <div className="flex items-center gap-2.5">
       <button type="button" className="key key-icon grid !h-7 !w-7 shrink-0 place-items-center" data-on={mute}
-        style={{ ['--c' as string]: 'var(--c-bad)' }} aria-pressed={mute} aria-label={mute ? t('Réactiver le son de {name}', { name: label }) : t('Couper le son de {name}', { name: label })}
+        style={tint('var(--c-bad)')} aria-pressed={mute} aria-label={mute ? t('Réactiver le son de {name}', { name: label }) : t('Couper le son de {name}', { name: label })}
         title={mute ? t('Son coupé : cliquer pour réactiver') : t('Couper le son')} onClick={onMute} disabled={disabled}>
         {mute ? <VolumeX size={14} /> : <Volume2 size={14} />}
       </button>

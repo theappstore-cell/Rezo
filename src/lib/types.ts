@@ -50,6 +50,34 @@ export interface Speaker {
   latencyMs?: number | null;
   deviceVolume?: number | null;
   syncedTo?: string | null;
+  net?: NetStats | null;
+  color?: string | null;
+  icon?: string | null;
+  planX?: number | null;
+  planY?: number | null;
+}
+
+export interface NetStats {
+  rttMs: number;
+  jitterMs: number;
+  lossPct: number;
+  samples: number;
+}
+
+export type WidgetKind = 'player' | 'volume' | 'rooms' | 'scenes' | 'meter';
+export type WidgetLayer = 'top' | 'normal' | 'bottom' | 'desktop';
+
+export interface Widget {
+  id: string;
+  kind: WidgetKind;
+  x?: number | null;
+  y?: number | null;
+  layer: WidgetLayer;
+  opacity: number;
+  scale: number;
+  locked: boolean;
+  clickThrough: boolean;
+  visible: boolean;
 }
 
 export interface SyncReport {
@@ -105,6 +133,7 @@ export interface UpdateInfo {
   size?: number | null;
   canInstall: boolean;
   folder: string;
+  notes?: string;
 }
 
 export interface MidiBinding {
@@ -131,6 +160,11 @@ export interface FullState {
   capture: { running: boolean; error?: string | null };
   pcMuted: boolean;
   version: string;
+  masterMute: boolean;
+  pinned: boolean;
+  uiZoom: number;
+  widgets: Widget[];
+  hasPlanImage: boolean;
 }
 
 export interface AudioApp {

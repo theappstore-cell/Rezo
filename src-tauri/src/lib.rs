@@ -4,54 +4,16 @@ mod engine;
 mod media;
 mod network;
 mod state;
+mod tray;
 mod ui;
 mod updater;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::image::Image;
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, RunEvent};
+use tauri::{Manager, RunEvent};
 
 use engine::Engine;
-
-pub fn tray_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
-    let (open, mixer, quit) = if lang == "en" {
-        ("Open Rezo", "Audio mixer…", "Quit")
-    } else {
-        ("Ouvrir Rezo", "Mixeur audio…", "Quitter")
-    };
-    let show = MenuItem::with_id(app, "show", open, true, None::<&str>)?;
-    let mixer = MenuItem::with_id(app, "mixer", mixer, true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", quit, true, None::<&str>)?;
-    Menu::with_items(app, &[&show, &mixer, &quit])
-}
-
-fn build_tray(app: &AppHandle, lang: &str) -> tauri::Result<()> {
-    let menu = tray_menu(app, lang)?;
-    TrayIconBuilder::with_id("main")
-        .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
-        .tooltip("Rezo")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, ev| match ev.id.as_ref() {
-            "show" => ui::show_main(app, None),
-            "mixer" => ui::open_mixer(app),
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, ev| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, rect, .. } = ev {
-                let p = rect.position.to_physical::<f64>(1.0);
-                let s = rect.size.to_physical::<f64>(1.0);
-                ui::toggle_main(tray.app_handle(), Some((p.x + s.width / 2.0, p.y, p.y + s.height)));
-            }
-        })
-        .build(app)?;
-    Ok(())
-}
 
 pub fn run() {
     let mut logger = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
@@ -97,8 +59,9 @@ pub fn run() {
             let engine = Engine::new(dir);
             app.manage(engine.clone());
             engine.start(app.handle().clone());
-            let lang = engine.store.read(|c| c.settings.language.clone());
-            build_tray(app.handle(), &lang)?;
+            ui::init_pinned(engine.store.read(|c| c.window_pinned));
+            tray::build(app.handle(), &engine)?;
+            ui::sync_widgets(app.handle());
             if !std::env::args().any(|a| a == "--hidden") {
                 ui::show_main(app.handle(), None);
             }
@@ -109,6 +72,20 @@ pub fn run() {
             commands::set_param,
             commands::set_room_param,
             commands::set_master,
+            commands::set_master_mute,
+            commands::identify_speaker,
+            commands::reconnect_speaker,
+            commands::reorder,
+            commands::set_speaker_style,
+            commands::set_plan_position,
+            commands::get_plan_image,
+            commands::set_plan_image,
+            commands::set_ui_zoom,
+            commands::widget_add,
+            commands::widget_update,
+            commands::widget_remove,
+            commands::widget_fit,
+            commands::show_settings,
             commands::set_local_pc,
             commands::set_source,
             commands::list_apps,

@@ -1,8 +1,11 @@
 import { memo, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Volume2 } from 'lucide-react';
+import { BellRing, GripVertical, Volume2 } from 'lucide-react';
+import type { HTMLAttributes } from 'react';
 import { clamp, fmtDb, fmtMs, fmtPan } from '../lib/db';
-import { protocolBadge } from '../lib/icons';
+import { protocolBadge, speakerIcon } from '../lib/icons';
+import { onSpeakerMenu } from './ContextMenu';
+import { NetBars } from './NetBars';
 import { roomLabel, useStore } from '../lib/store';
 import { t } from '../lib/i18n';
 import type { Room, Speaker } from '../lib/types';
@@ -13,6 +16,7 @@ import { useUi } from '../lib/ui';
 import { FxButton } from './FxPanel';
 import { NudgeButton, Pad } from './Pad';
 import { RotaryKnob } from './RotaryKnob';
+import { tint } from '../lib/style';
 
 const NEUTRAL = '#9a9a93';
 
@@ -49,25 +53,48 @@ function FaderBay({ valueDb, device, ...rest }: { valueDb: number; device?: Devi
   );
 }
 
-function Shell({ color, name, sub, width = 112, children }: { color: string; name: string; sub?: string; width?: number; children: ReactNode }) {
+type HandleProps = HTMLAttributes<HTMLElement> & { style?: React.CSSProperties };
+
+function Shell({ color, name, sub, width = 112, children, handle, icon: Icon, tools, ...rest }: {
+  color: string;
+  name: string;
+  sub?: string;
+  width?: number;
+  children: ReactNode;
+  handle?: HandleProps;
+  tools?: ReactNode;
+  icon?: React.ComponentType<{ size?: number; className?: string; style?: React.CSSProperties }>;
+} & HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className="flex shrink-0 flex-col gap-2 rounded-md border border-line bg-panel p-2" style={{ width, borderTop: `3px solid ${color}` }}>
-      <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold" title={name}>{name}</div>
-        {sub && <div className="legend truncate" title={sub}>{sub}</div>}
+    <div {...rest} className="flex shrink-0 flex-col gap-2 rounded-md border border-line bg-panel p-2" style={{ width, borderTop: `3px solid ${color}`, ...rest.style }}>
+      <div className="flex min-w-0 items-start gap-1">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1">
+            {Icon && <Icon size={13} className="shrink-0" style={{ color }} />}
+            <div className="truncate text-[13px] font-semibold" title={name}>{name}</div>
+          </div>
+          {sub && <div className="legend truncate" title={sub}>{sub}</div>}
+        </div>
+        {tools}
+        {handle && (
+          <span {...handle} className="-mr-1 grid h-6 w-4 shrink-0 place-items-center rounded text-dim hover:bg-raise hover:text-ink" title={t('Glisser pour changer l’ordre')} aria-hidden>
+            <GripVertical size={13} />
+          </span>
+        )}
       </div>
       {children}
     </div>
   );
 }
 
-export const SpeakerStrip = memo(function SpeakerStrip({ sp, room }: { sp: Speaker; room?: Room }) {
+export const SpeakerStrip = memo(function SpeakerStrip({ sp, room, handle, style }: { sp: Speaker; room?: Room; handle?: HandleProps; style?: React.CSSProperties }) {
   const setParam = useStore((s) => s.setParam);
   const setSend = useStore((s) => s.setSend);
   const setDeviceVolume = useStore((s) => s.setDeviceVolume);
   const setUseLineIn = useStore((s) => s.setUseLineIn);
   const openModal = useUi((u) => u.open);
-  const color = room?.color ?? NEUTRAL;
+  const identify = useStore((s) => s.identify);
+  const color = sp.color ?? room?.color ?? NEUTRAL;
   const p = sp.params;
   const id = `ch:${sp.id}`;
   const off = !sp.online;
@@ -78,10 +105,18 @@ export const SpeakerStrip = memo(function SpeakerStrip({ sp, room }: { sp: Speak
   const isNetwork = sp.protocol === 'sonos' || sp.protocol === 'upnp';
 
   return (
-    <Shell color={color} name={sp.name} sub={room ? roomLabel(room) : t('Sans pièce')} width={hasDevice ? 140 : 112}>
+    <Shell color={color} name={sp.name} sub={room ? roomLabel(room) : t('Sans pièce')} width={hasDevice ? 140 : 112}
+      handle={handle} icon={sp.icon ? speakerIcon(sp) : undefined} style={style} data-speaker={sp.id} onContextMenu={onSpeakerMenu(sp)}
+      tools={
+        <button type="button" className="grid h-6 w-5 shrink-0 place-items-center rounded text-dim hover:bg-raise hover:text-ink disabled:opacity-40" disabled={off && !sp.running}
+          aria-label={t('Identifier {name} (bip)', { name: sp.name })} title={t('Identifier : petit bip sur cette enceinte seulement (touche I)')} onClick={() => void identify(sp.id)}>
+          <BellRing size={12} />
+        </button>
+      }>
       <div className="flex items-center gap-1.5">
-        <span className="inline-block h-[8px] w-[8px] rounded-full" style={{ background: state }} title={sp.streaming ? t('Reçoit le flux') : off ? t('Hors ligne') : t('En attente')} />
-        <span className="legend truncate">{protocolBadge(sp)}</span>
+        <span className="inline-block h-[8px] w-[8px] shrink-0 rounded-full" style={{ background: state }} title={sp.streaming ? t('Reçoit le flux') : off ? t('Hors ligne') : t('En attente')} />
+        <span className="legend min-w-0 flex-1 truncate" title={protocolBadge(sp)}>{protocolBadge(sp)}</span>
+        <NetBars sp={sp} />
       </div>
       {sp.syncedTo && <div className="legend truncate !text-[11px] text-ok" title={t('Joue le son de {name}, synchronisé par la Sonos', { name: sp.syncedTo })}>{t('Groupée avec {name}', { name: sp.syncedTo })}</div>}
 
@@ -106,7 +141,7 @@ export const SpeakerStrip = memo(function SpeakerStrip({ sp, room }: { sp: Speak
 
       <div className="grid grid-cols-[1fr_auto] gap-1">
         <FxButton sp={sp} color={color} />
-        <button type="button" className="key !h-[26px] !px-2 !text-[11.5px]" data-on={eqActive(sp)} style={{ ['--c' as string]: color }}
+        <button type="button" className="key !h-[26px] !px-2 !text-[11.5px]" data-on={eqActive(sp)} style={tint(color)}
           title={t('Égaliseur 6 bandes de cette enceinte')} onClick={() => openModal({ type: 'eq', id: sp.id })}>EQ</button>
       </div>
 

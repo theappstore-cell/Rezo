@@ -17,10 +17,10 @@ let state: FullState = {
   source: { kind: 'system' },
   localPc: false,
   speakers: [
-    sp({ id: 'RINCON_A1', name: 'Living room', roomId: 'salon', protocol: 'sonos', model: 'Sonos Five', lineIn: true, active: true, running: true, streaming: true, latencyMs: 300, deviceVolume: 35, params: base({ volumeDb: -6 }) }),
-    sp({ id: 'RINCON_A2', name: 'Living room (rear)', roomId: 'salon', protocol: 'sonos', model: 'Sonos One', active: true, running: true, streaming: true, latencyMs: 300, deviceVolume: 28, params: base({ volumeDb: -9, lowDb: 3 }) }),
-    sp({ id: 'RINCON_B1', name: 'Kitchen', roomId: 'cuisine', protocol: 'sonos', model: 'Sonos Play:1', latencyMs: 300, deviceVolume: 20, params: base({ volumeDb: -12 }) }),
-    sp({ id: 'native-pc2', name: 'Office PC', roomId: 'bureau', protocol: 'native', address: '192.168.1.62', port: 5004, model: 'Rezo receiver', active: true, running: true, streaming: true, latencyMs: 42, deviceVolume: 100 }),
+    sp({ id: 'RINCON_A1', name: 'Living room', roomId: 'salon', protocol: 'sonos', model: 'Sonos Five', lineIn: true, active: true, running: true, streaming: true, latencyMs: 300, deviceVolume: 35, params: base({ volumeDb: -6 }), net: { rttMs: 3, jitterMs: 1, lossPct: 0, samples: 15 }, planX: 0.22, planY: 0.62 }),
+    sp({ id: 'RINCON_A2', name: 'Living room (rear)', roomId: 'salon', protocol: 'sonos', model: 'Sonos One', active: true, running: true, streaming: true, latencyMs: 300, deviceVolume: 28, params: base({ volumeDb: -9, lowDb: 3 }), net: { rttMs: 48, jitterMs: 22, lossPct: 7, samples: 15 }, planX: 0.4, planY: 0.82 }),
+    sp({ id: 'RINCON_B1', name: 'Kitchen', roomId: 'cuisine', protocol: 'sonos', model: 'Sonos Play:1', latencyMs: 300, deviceVolume: 20, params: base({ volumeDb: -12 }), net: { rttMs: 9, jitterMs: 3, lossPct: 0, samples: 12 } }),
+    sp({ id: 'native-pc2', name: 'Office PC', roomId: 'bureau', protocol: 'native', address: '192.168.1.62', port: 5004, model: 'Rezo receiver', active: true, running: true, streaming: true, latencyMs: 42, deviceVolume: 100, icon: 'Laptop', color: '#0b7285' }),
     sp({ id: 'web-ph1', name: "Lea's iPhone", roomId: 'chambre', protocol: 'web', model: 'Browser', active: true, running: true, streaming: true, latencyMs: 31, deviceVolume: 80, params: base({ pan: -0.2 }) }),
     sp({ id: 'RINCON_C1', name: 'TV soundbar', roomId: '', protocol: 'upnp', model: 'DLNA', online: false }),
   ],
@@ -37,8 +37,17 @@ let state: FullState = {
   httpPort: 49494,
   capture: { running: true, error: null },
   pcMuted: true,
-  version: '0.3.0',
+  version: '0.5.0',
+  masterMute: false,
+  pinned: false,
+  uiZoom: 1,
+  widgets: [
+    { id: 'w1', kind: 'player', layer: 'normal', opacity: 0.72, scale: 1, locked: false, clickThrough: false, visible: true },
+    { id: 'w2', kind: 'volume', layer: 'desktop', opacity: 0.6, scale: 1, locked: true, clickThrough: false, visible: true },
+  ],
+  hasPlanImage: false,
 };
+let planImage: string | null = null;
 
 const apps: AudioApp[] = [
   { pid: 4120, name: 'Spotify', exe: 'spotify.exe', icon: null, active: true },
@@ -78,6 +87,25 @@ export async function mockInvoke(cmd: string, a: Record<string, any> = {}): Prom
     case 'set_param': { const s = spk(a.id); if (s) (s.params as any)[a.key] = a.value; return null; }
     case 'set_room_param': { const r = state.rooms.find((x) => x.id === a.id); if (r) (r as any)[a.key] = a.value; return null; }
     case 'set_master': state.masterDb = a.db; return null;
+    case 'set_master_mute': state.masterMute = a.on; return null;
+    case 'identify_speaker': { const s = spk(a.id); if (!s?.online) throw new Error("L'enceinte est hors ligne."); return null; }
+    case 'reconnect_speaker': { const s = spk(a.id); if (s) s.error = null; return snap(); }
+    case 'reorder': {
+      const by = <T extends { id: string }>(items: T[], ids?: string[]) => (ids ? [...items].sort((x, y) => (ids.indexOf(x.id) + 1 || 1e9) - (ids.indexOf(y.id) + 1 || 1e9)) : items);
+      state.speakers = by(state.speakers, a.speakers);
+      state.rooms = by(state.rooms, a.rooms);
+      return null;
+    }
+    case 'set_speaker_style': { const s = spk(a.id); if (s) { if (a.color !== undefined) s.color = a.color || null; if (a.icon !== undefined) s.icon = a.icon || null; } return null; }
+    case 'set_plan_position': { const s = spk(a.id); if (s) { s.planX = a.x; s.planY = a.y; } return null; }
+    case 'get_plan_image': return planImage;
+    case 'set_plan_image': planImage = a.data; state.hasPlanImage = !!a.data; return null;
+    case 'set_ui_zoom': { const z = Math.min(1.6, Math.max(0.7, Math.round(a.zoom * 20) / 20)); state.uiZoom = z; (document.documentElement.style as any).zoom = String(z); return z; }
+    case 'widget_add': { let n = state.widgets.length + 1; while (state.widgets.some((w) => w.id === `w${n}`)) n++; state.widgets.push({ id: `w${n}`, kind: a.kind, layer: 'normal', opacity: 0.72, scale: 1, locked: false, clickThrough: false, visible: true }); return snap(); }
+    case 'widget_update': { const w = state.widgets.find((x) => x.id === a.id); if (w) { Object.assign(w, a.patch); if (w.clickThrough) w.locked = true; } return snap(); }
+    case 'widget_remove': state.widgets = state.widgets.filter((w) => w.id !== a.id); return snap();
+    case 'widget_fit': return null;
+    case 'show_settings': return null;
     case 'set_local_pc': state.localPc = a.on; return null;
     case 'set_source': state.source = a.source; return null;
     case 'list_apps': return clone(apps);
@@ -106,7 +134,7 @@ export async function mockInvoke(cmd: string, a: Record<string, any> = {}): Prom
       media.at = Date.now();
       return null;
     }
-    case 'check_update': return { current: '0.2.0', latest: '0.3.0', available: true, page: 'https://github.com/theappstore-cell/Rezo/releases/latest', asset: 'Rezo-0.3.0-windows-x64-portable.exe', size: 8_400_000, canInstall: true, folder: 'C:\\Rezo' };
+    case 'check_update': return { current: '0.5.0', latest: '0.6.0', available: true, page: 'https://github.com/theappstore-cell/Rezo/releases/latest', asset: 'Rezo-0.6.0-windows-x64-portable.exe', size: 8_400_000, canInstall: true, folder: 'C:\\Rezo', notes: "## What's new\n\n- **Desktop widgets**: player, volume, rooms, scenes and meters.\n- **Identify** plays a short chime on one speaker.\n- Undo with Ctrl+Z.\n\n## Verify\nSee SECURITY.md." };
     case 'install_update': {
       let received = 0;
       const total = 8_400_000;

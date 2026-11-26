@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { mockInvoke, mockListen, startMockMeters } from './mock';
-import type { AudioApp, FullState, Meters, MidiBinding, MixerState, ReceiverInfo, MediaState, Settings, Source, SyncReport, UpdateInfo } from './types';
+import type { AudioApp, FullState, Meters, MidiBinding, MixerState, ReceiverInfo, MediaState, Settings, Source, SyncReport, UpdateInfo, Widget, WidgetKind } from './types';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -23,6 +23,20 @@ export const api = {
   setParam: (id: string, key: string, value: unknown) => call<void>('set_param', { id, key, value }),
   setRoomParam: (id: string, key: string, value: unknown) => call<void>('set_room_param', { id, key, value }),
   setMaster: (db: number) => call<void>('set_master', { db }),
+  setMasterMute: (on: boolean) => call<void>('set_master_mute', { on }),
+  identifySpeaker: (id: string) => call<void>('identify_speaker', { id }),
+  reconnectSpeaker: (id: string) => call<FullState>('reconnect_speaker', { id }),
+  reorder: (order: { speakers?: string[]; rooms?: string[] }) => call<void>('reorder', order),
+  setSpeakerStyle: (id: string, style: { color?: string; icon?: string }) => call<void>('set_speaker_style', { id, ...style }),
+  setPlanPosition: (id: string, x: number | null, y: number | null) => call<void>('set_plan_position', { id, x, y }),
+  getPlanImage: () => call<string | null>('get_plan_image'),
+  setPlanImage: (data: string | null) => call<void>('set_plan_image', { data }),
+  setUiZoom: (zoom: number) => call<number>('set_ui_zoom', { zoom }),
+  widgetAdd: (kind: WidgetKind) => call<FullState>('widget_add', { kind }),
+  widgetUpdate: (id: string, patch: Partial<Pick<Widget, 'layer' | 'opacity' | 'scale' | 'locked' | 'clickThrough' | 'visible'>>) => call<FullState>('widget_update', { id, patch }),
+  widgetRemove: (id: string) => call<FullState>('widget_remove', { id }),
+  widgetFit: (id: string, width: number, height: number) => call<void>('widget_fit', { id, width, height }),
+  showSettings: () => call<void>('show_settings'),
   setLocalPc: (on: boolean) => call<void>('set_local_pc', { on }),
   setSource: (source: Source) => call<void>('set_source', { source }),
   listApps: () => call<AudioApp[]>('list_apps'),

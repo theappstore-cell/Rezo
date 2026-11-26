@@ -22,6 +22,8 @@ pub struct UpdateInfo {
     pub size: Option<u64>,
     pub can_install: bool,
     pub folder: String,
+    // Release notes (Markdown) as published on GitHub, shortened.
+    pub notes: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -78,7 +80,17 @@ fn wanted_asset(version: &str) -> Option<String> {
     }
 }
 
-async fn latest_release(c: &reqwest::Client) -> Result<(String, Vec<Asset>)> {
+const NOTES_MAX_CHARS: usize = 6000;
+
+fn short_notes(body: &str) -> String {
+    let body = body.trim();
+    match body.char_indices().nth(NOTES_MAX_CHARS) {
+        Some((i, _)) => format!("{}…", &body[..i]),
+        None => body.to_string(),
+    }
+}
+
+async fn latest_release(c: &reqwest::Client) -> Result<(String, Vec<Asset>, String)> {
     let body = c.get(LATEST).header("Accept", "application/vnd.github+json").send().await?.error_for_status()?.text().await?;
     let v: serde_json::Value = serde_json::from_str(&body)?;
     let tag = v["tag_name"].as_str().ok_or_else(|| anyhow!("réponse GitHub sans version"))?.trim_start_matches('v').to_string();
@@ -96,12 +108,12 @@ async fn latest_release(c: &reqwest::Client) -> Result<(String, Vec<Asset>)> {
                 .collect()
         })
         .unwrap_or_default();
-    Ok((tag, assets))
+    Ok((tag, assets, short_notes(v["body"].as_str().unwrap_or(""))))
 }
 
 pub async fn check() -> Result<UpdateInfo> {
     let c = client()?;
-    let (latest, assets) = latest_release(&c).await?;
+    let (latest, assets, notes) = latest_release(&c).await?;
     let current = env!("CARGO_PKG_VERSION").to_string();
     let exe = exe_path()?;
     let folder = exe.parent().map(|p| p.display().to_string().trim_start_matches(r"\\?\").to_string()).unwrap_or_default();
@@ -116,6 +128,7 @@ pub async fn check() -> Result<UpdateInfo> {
         asset: asset.map(|a| a.name),
         can_install,
         folder,
+        notes,
     })
 }
 
@@ -131,7 +144,7 @@ fn expected_hash(sums: &str, name: &str) -> Option<String> {
 // Downloads next to the running executable, checks SHA-256, swaps the files and restarts on the new version.
 pub async fn install(app: AppHandle) -> Result<()> {
     let c = client()?;
-    let (latest, assets) = latest_release(&c).await?;
+    let (latest, assets, _) = latest_release(&c).await?;
     if !is_newer(&latest, env!("CARGO_PKG_VERSION")) {
         bail!("Rezo est déjà à jour");
     }
@@ -255,6 +268,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn release_notes_are_trimmed_on_a_character_boundary() {
+        assert_eq!(short_notes("  ## What's new
+- EQ  "), "## What's new
+- EQ");
+        let long = "é".repeat(NOTES_MAX_CHARS + 50);
+        let n = short_notes(&long);
+        assert_eq!(n.chars().count(), NOTES_MAX_CHARS + 1);
+        assert!(n.ends_with('…'));
+    }
+
+    #[test]
     fn versions_compare_numerically() {
         assert!(is_newer("0.10.0", "0.9.9"));
         assert!(is_newer("v0.3.0", "0.2.0"));
@@ -287,7 +311,8 @@ mod tests {
             let info = check().await.unwrap();
             println!("PROBE {info:?}");
             let c = client().unwrap();
-            let (latest, assets) = latest_release(&c).await.unwrap();
+            let (latest, assets, notes) = latest_release(&c).await.unwrap();
+            assert!(notes.chars().count() <= NOTES_MAX_CHARS + 1);
             let name = wanted_asset(&latest).unwrap();
             let asset = assets.iter().find(|a| a.name == name).unwrap();
             let sums_url = &assets.iter().find(|a| a.name == "SHA256SUMS.txt").unwrap().url;

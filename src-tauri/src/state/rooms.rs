@@ -187,6 +187,11 @@ pub struct Speaker {
     pub receiver_volume: u32,
     pub active: bool,
     pub params: ChannelParams,
+    // Personal touches: a colour and an icon of its own (else the room's), and its place on the floor plan (0..1).
+    pub color: Option<String>,
+    pub icon: Option<String>,
+    pub plan_x: Option<f32>,
+    pub plan_y: Option<f32>,
 }
 
 impl Default for Speaker {
@@ -208,6 +213,10 @@ impl Default for Speaker {
             receiver_volume: 100,
             active: false,
             params: ChannelParams::default(),
+            color: None,
+            icon: None,
+            plan_x: None,
+            plan_y: None,
         }
     }
 }
@@ -221,6 +230,31 @@ impl Speaker {
     pub fn plays_line_in(&self) -> bool {
         self.protocol == Protocol::Sonos && self.line_in && self.use_line_in && self.uuid.is_some()
     }
+
+    // Colours are "#rrggbb" and icons short names from the interface's list; anything else is dropped.
+    pub fn sanitize_style(&mut self) {
+        if !self.color.as_deref().map_or(true, is_hex_color) {
+            self.color = None;
+        }
+        if !self.icon.as_deref().map_or(true, |i| !i.is_empty() && i.len() <= 24 && i.chars().all(|c| c.is_ascii_alphanumeric())) {
+            self.icon = None;
+        }
+        let pos = |v: Option<f32>| v.filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 1.0));
+        self.plan_x = pos(self.plan_x);
+        self.plan_y = pos(self.plan_y);
+        if self.plan_x.is_none() || self.plan_y.is_none() {
+            self.plan_x = None;
+            self.plan_y = None;
+        }
+    }
+}
+
+pub fn is_hex_color(c: &str) -> bool {
+    c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+pub fn clamp_zoom(z: f32) -> f32 {
+    if z.is_finite() { (z.clamp(0.7, 1.6) * 20.0).round() / 20.0 } else { 1.0 }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -321,6 +355,87 @@ impl Default for Settings {
     }
 }
 
+pub const WIDGET_KINDS: [&str; 5] = ["player", "volume", "rooms", "scenes", "meter"];
+pub const WIDGET_LAYERS: [&str; 4] = ["top", "normal", "bottom", "desktop"];
+
+// A small borderless window left on the desktop, like a Rainmeter skin. Kind and layer stay strings so that an
+// unknown value from a newer version cannot make the whole configuration unreadable.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Widget {
+    pub id: String,
+    pub kind: String,
+    // Top-left corner in physical pixels; None places it near the bottom-right corner of the main screen.
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    // "top" above every window, "normal", "bottom" below every window, "desktop" on the desktop (stays visible
+    // when "Show desktop" hides the windows).
+    pub layer: String,
+    pub opacity: f32,
+    pub scale: f32,
+    pub locked: bool,
+    pub click_through: bool,
+    pub visible: bool,
+}
+
+impl Default for Widget {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            kind: "player".into(),
+            x: None,
+            y: None,
+            layer: "normal".into(),
+            opacity: 0.72,
+            scale: 1.0,
+            locked: false,
+            click_through: false,
+            visible: true,
+        }
+    }
+}
+
+impl Widget {
+    pub fn clamp(&mut self) {
+        if !WIDGET_KINDS.contains(&self.kind.as_str()) {
+            self.kind = "player".into();
+        }
+        if !WIDGET_LAYERS.contains(&self.layer.as_str()) {
+            self.layer = "normal".into();
+        }
+        self.opacity = if self.opacity.is_finite() { (self.opacity.clamp(0.0, 1.0) * 100.0).round() / 100.0 } else { 0.72 };
+        self.scale = if self.scale.is_finite() { (self.scale.clamp(0.6, 2.0) * 100.0).round() / 100.0 } else { 1.0 };
+        // A click-through widget cannot be dragged: keep it locked so it never looks movable.
+        if self.click_through {
+            self.locked = true;
+        }
+    }
+
+    pub fn apply(&mut self, patch: &serde_json::Value) -> Result<()> {
+        let obj = patch.as_object().ok_or_else(|| anyhow::anyhow!("objet attendu"))?;
+        for (k, v) in obj {
+            let b = || v.as_bool().ok_or_else(|| anyhow::anyhow!("booléen attendu pour {k}"));
+            let f = || v.as_f64().map(|x| x as f32).ok_or_else(|| anyhow::anyhow!("nombre attendu pour {k}"));
+            match k.as_str() {
+                "layer" => self.layer = v.as_str().ok_or_else(|| anyhow::anyhow!("texte attendu"))?.to_string(),
+                "opacity" => self.opacity = f()?,
+                "scale" => self.scale = f()?,
+                "locked" => self.locked = b()?,
+                "clickThrough" => {
+                    self.click_through = b()?;
+                    if !self.click_through {
+                        self.locked = false;
+                    }
+                }
+                "visible" => self.visible = b()?,
+                _ => anyhow::bail!("réglage de widget inconnu : {k}"),
+            }
+        }
+        self.clamp();
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
@@ -338,6 +453,12 @@ pub struct Config {
     pub pc_muted_device: Option<String>,
     pub pc_pending_restore: Vec<PendingRestore>,
     pub access_key: String,
+    // Silences every speaker without touching the master level.
+    pub master_mute: bool,
+    // Main window kept above the other windows and visible when it loses focus.
+    pub window_pinned: bool,
+    pub ui_zoom: f32,
+    pub widgets: Vec<Widget>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -379,6 +500,10 @@ impl Default for Config {
             pc_muted_device: None,
             pc_pending_restore: vec![],
             access_key: String::new(),
+            master_mute: false,
+            window_pinned: false,
+            ui_zoom: 1.0,
+            widgets: vec![],
         }
     }
 }
@@ -473,11 +598,23 @@ impl Store {
         }
         cfg.version = CONFIG_VERSION;
         let mut dirty = migrated;
+        cfg.ui_zoom = clamp_zoom(cfg.ui_zoom);
+        for w in cfg.widgets.iter_mut() {
+            w.clamp();
+        }
+        cfg.widgets.retain(|w| !w.id.is_empty());
+        for sp in cfg.speakers.iter_mut() {
+            sp.sanitize_style();
+        }
         if cfg.access_key.len() < 32 {
             cfg.access_key = new_access_key();
             dirty = true;
         }
         Self { path, cfg: RwLock::new(cfg), dirty: AtomicBool::new(dirty) }
+    }
+
+    pub fn dir(&self) -> PathBuf {
+        self.path.parent().map(|d| d.to_path_buf()).unwrap_or_default()
     }
 
     pub fn read<R>(&self, f: impl FnOnce(&Config) -> R) -> R {
@@ -536,5 +673,43 @@ mod tests {
         assert_eq!(back, p);
         let old: ChannelParams = serde_json::from_str(r#"{"gainDb": 1.0}"#).unwrap();
         assert!(old.eq_enabled && old.eq_preset == "flat" && old.eq_gains == [0.0; 6], "anciennes configs");
+    }
+
+    #[test]
+    fn widgets_are_validated_and_unknown_values_do_not_break_the_config() {
+        let cfg: Config = serde_json::from_str(
+            r#"{"widgets":[{"id":"w1","kind":"hologram","layer":"sky","opacity":4,"scale":0.1},{"id":"w2","kind":"meter"}]}"#,
+        )
+        .unwrap();
+        let mut w = cfg.widgets[0].clone();
+        w.clamp();
+        assert_eq!((w.kind.as_str(), w.layer.as_str(), w.opacity, w.scale), ("player", "normal", 1.0, 0.6));
+        assert_eq!(cfg.widgets[1].layer, "normal");
+        assert!(cfg.widgets[1].visible && !cfg.widgets[1].locked);
+        assert_eq!(cfg.ui_zoom, 1.0, "older configs get the default zoom");
+
+        let mut w = Widget { id: "w3".into(), ..Widget::default() };
+        w.apply(&serde_json::json!({"layer": "desktop", "opacity": 0.333, "clickThrough": true})).unwrap();
+        assert_eq!((w.layer.as_str(), w.opacity, w.click_through, w.locked), ("desktop", 0.33, true, true));
+        w.apply(&serde_json::json!({"clickThrough": false})).unwrap();
+        assert!(!w.locked, "turning click-through off makes the widget movable again");
+        assert!(w.apply(&serde_json::json!({"x": 10})).is_err(), "position is set by dragging only");
+    }
+
+    #[test]
+    fn speaker_style_and_plan_position_are_sanitised() {
+        let mut sp = Speaker {
+            color: Some("red; background:url(x)".into()),
+            icon: Some("Tv".into()),
+            plan_x: Some(1.7),
+            plan_y: Some(f32::NAN),
+            ..Speaker::default()
+        };
+        sp.sanitize_style();
+        assert_eq!((sp.color, sp.icon.as_deref(), sp.plan_x, sp.plan_y), (None, Some("Tv"), None, None));
+        let mut sp = Speaker { color: Some("#1C7ed6".into()), plan_x: Some(-0.2), plan_y: Some(0.5), ..Speaker::default() };
+        sp.sanitize_style();
+        assert_eq!((sp.color.as_deref(), sp.plan_x, sp.plan_y), (Some("#1C7ed6"), Some(0.0), Some(0.5)));
+        assert_eq!((clamp_zoom(3.0), clamp_zoom(1.13), clamp_zoom(f32::NAN)), (1.6, 1.15, 1.0));
     }
 }

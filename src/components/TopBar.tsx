@@ -1,4 +1,4 @@
-import { AppWindow, ChevronDown, MonitorSpeaker, Pin, PinOff, Plus, Settings, Minus, SlidersHorizontal } from 'lucide-react';
+import { AppWindow, ChevronDown, MonitorSpeaker, Pin, Plus, Settings, Minus, SlidersHorizontal, VolumeX } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { dbToPos, fmtDb, posToDb, roundTo } from '../lib/db';
@@ -11,6 +11,7 @@ import { LedMeter } from './LedMeter';
 import { MediaBar } from './MediaBar';
 import { NARROW_PX, WIDE_HEADER_PX, useWidth } from '../lib/layout';
 import { Slider } from './Slider';
+import { tint } from '../lib/style';
 
 const ZERO_DB = dbToPos(0);
 
@@ -81,12 +82,20 @@ function SourcePicker({ className = '' }: { className?: string }) {
 
 function MasterBlock({ className = '' }: { className?: string }) {
   const masterDb = useStore((s) => s.s?.masterDb ?? 0);
+  const muted = useStore((s) => s.s?.masterMute ?? false);
   const setMaster = useStore((s) => s.setMaster);
+  const setMasterMute = useStore((s) => s.setMasterMute);
   return (
     <div className={className}>
-      <div className="mb-0.5 flex items-baseline justify-between">
+      <div className="mb-0.5 flex items-center justify-between gap-2">
         <span className="legend">{t('Volume général')}</span>
-        <span className="num text-[12.5px] font-semibold">{fmtDb(masterDb)} dB</span>
+        <span className="flex items-center gap-1.5">
+          <button type="button" className="key key-icon grid !h-[20px] !w-[22px] place-items-center" style={tint('var(--c-bad)')} data-on={muted} aria-pressed={muted}
+            title={muted ? t('Rétablir le son de toutes les enceintes (M)') : t('Couper toutes les enceintes (M)')} aria-label={t('Couper toutes les enceintes')} onClick={() => setMasterMute(!muted)}>
+            <VolumeX size={12} />
+          </button>
+          <span className={`num text-[12.5px] font-semibold ${muted ? 'text-bad line-through' : ''}`}>{fmtDb(masterDb)} dB</span>
+        </span>
       </div>
       <Slider label={t('Volume général')} value={dbToPos(masterDb)} mark={ZERO_DB} onChange={(v) => setMaster(roundTo(posToDb(v), 0.5))} onReset={() => setMaster(0)} controlId="master:volumeDb" />
       <div className="-mt-0.5"><LedMeter source="master" height={5} orientation="horizontal" /></div>
@@ -115,9 +124,9 @@ function SceneBar() {
   return (
     <div className="flex items-center gap-1.5 overflow-x-auto py-1" role="group" aria-label={t('Scènes')}>
       <span className="legend shrink-0">{t('Scènes')}</span>
-      {scenes.map((sc) => (
+      {scenes.map((sc, i) => (
         <div key={sc.id} className="group relative shrink-0">
-          <button type="button" onClick={() => void applyScene(sc.id)} className="key !h-[26px]">{sc.name}</button>
+          <button type="button" onClick={() => void applyScene(sc.id)} className="key !h-[26px]" title={i < 9 ? t('Rappeler ce mix (touche {n})', { n: i + 1 }) : undefined}>{sc.name}</button>
           <button
             type="button"
             aria-label={armedDelete === sc.id ? t('Confirmer la suppression de {name}', { name: sc.name }) : t('Supprimer {name}', { name: sc.name })}
@@ -164,7 +173,8 @@ const iconBtn = 'key key-icon grid !h-7 !w-7 place-items-center';
 
 function Actions({ compact }: { compact: boolean }) {
   const open = useUi((u) => u.open);
-  const [pinned, setPinned] = useState(false);
+  const pinned = useStore((s) => s.s?.pinned ?? false);
+  const setPinned = useStore((s) => s.setPinned);
   return (
     <div className="flex shrink-0 items-center gap-1">
       <button type="button" onClick={() => open({ type: 'add' })} className="key key-primary flex items-center gap-1.5 !h-7" title={t('Ajouter un appareil')}>
@@ -173,9 +183,9 @@ function Actions({ compact }: { compact: boolean }) {
       {isWindows && <button type="button" aria-label={t('Mixeur audio')} title={t('Mixeur audio : sorties filaires / Bluetooth et volume par application')} onClick={() => void api.openMixer()} className={iconBtn}><SlidersHorizontal size={14} /></button>}
       <button type="button" aria-label={t('Réglages')} title={t('Réglages')} onClick={() => open({ type: 'settings' })} className={iconBtn}><Settings size={14} /></button>
       <button type="button" aria-label={pinned ? t('Désépingler la fenêtre') : t('Épingler la fenêtre')} aria-pressed={pinned} data-on={pinned}
-        title={t('Épingler : la fenêtre ne se masque plus quand elle perd le focus')}
-        onClick={() => { setPinned(!pinned); void api.setPinned(!pinned); }} className={iconBtn}>
-        {pinned ? <Pin size={14} /> : <PinOff size={14} />}
+        title={pinned ? t('Épinglée : la fenêtre reste au premier plan. Cliquez pour la libérer.') : t('Épingler : la fenêtre reste au premier plan et ne se masque plus quand elle perd le focus')}
+        onClick={() => setPinned(!pinned)} className={iconBtn}>
+        <Pin size={15} strokeWidth={2} fill={pinned ? 'currentColor' : 'none'} className={pinned ? '' : 'rotate-45'} />
       </button>
       <button type="button" aria-label={t('Réduire dans la zone de notification')} title={t('Réduire dans la zone de notification')} onClick={() => void api.hideWindow()} className={iconBtn}><Minus size={14} /></button>
     </div>

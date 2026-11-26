@@ -1,12 +1,14 @@
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { LayoutGrid, Map as MapIcon, Pencil, Plus, Trash2 } from 'lucide-react';
+import { FloorPlan } from '../components/FloorPlan';
+import { onSpeakerMenu } from '../components/ContextMenu';
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent } from 'react';
 import { roomLabel, speakersOf, useStore } from '../lib/store';
-import { api } from '../lib/api';
 import { useUi } from '../lib/ui';
 import type { Room, Speaker } from '../lib/types';
 import { t } from '../lib/i18n';
 import { useScrollMemory } from '../lib/layout';
+import { tint } from '../lib/style';
 
 interface DragState {
   id: string;
@@ -16,6 +18,15 @@ interface DragState {
 }
 
 const NONE = '__none';
+const MODE_KEY = 'rezo.planMode';
+
+function savedMode(): 'rooms' | 'free' {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'free' ? 'free' : 'rooms';
+  } catch {
+    return 'rooms';
+  }
+}
 
 export function PlanView() {
   const s = useStore((st) => st.s);
@@ -25,6 +36,11 @@ export function PlanView() {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [confirmPrune, setConfirmPrune] = useState(false);
+  const [mode, setModeState] = useState(savedMode);
+  const setMode = (m: 'rooms' | 'free') => {
+    setModeState(m);
+    try { localStorage.setItem(MODE_KEY, m); } catch {}
+  };
   useEffect(() => {
     if (!confirmPrune) return;
     const h = setTimeout(() => setConfirmPrune(false), 4000);
@@ -75,6 +91,8 @@ export function PlanView() {
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerCancel={() => { start.current = null; setDrag(null); setOver(null); }}
+      onContextMenu={onSpeakerMenu(sp)}
+      data-speaker={sp.id}
       title={t('Glisser vers une autre pièce · cliquer pour régler')}
       className="flex max-w-full cursor-grab touch-none items-center gap-1.5 rounded border border-line bg-panel2 px-2 py-1 text-[12.5px] active:cursor-grabbing"
       style={{ opacity: drag?.id === sp.id ? 0.35 : sp.online || sp.running ? 1 : 0.55 }}
@@ -105,7 +123,7 @@ export function PlanView() {
             </button>
           )}
           {room && (
-            <button type="button" className="key !h-[24px] !px-2 !text-[11.5px]" data-on={anyOn} style={{ ['--c' as string]: 'var(--c-ok)' }}
+            <button type="button" className="key !h-[24px] !px-2 !text-[11.5px]" data-on={anyOn} style={tint('var(--c-ok)')}
               disabled={members.length === 0} aria-pressed={anyOn} aria-label={t('Allumer ou éteindre {name}', { name: roomLabel(room) })}
               onClick={() => void setRoomSend(room.id, !anyOn)}>{anyOn ? t('Allumée') : t('Éteinte')}</button>
           )}
@@ -124,16 +142,38 @@ export function PlanView() {
   const prune = async () => {
     if (!confirmPrune) return setConfirmPrune(true);
     setConfirmPrune(false);
-    for (const r of empty) await api.deleteRoom(r.id);
-    useStore.getState().apply(await api.getState());
+    await useStore.getState().deleteRooms(empty.map((r) => r.id));
   };
+
+  const modes = (
+    <div className="mb-3 flex items-center gap-2">
+      <div className="flex rounded-md border border-rule p-0.5" role="tablist" aria-label={t('Affichage du plan')}>
+        {([['rooms', LayoutGrid, 'Par pièce'], ['free', MapIcon, 'Plan libre']] as const).map(([id, Icon, label]) => (
+          <button key={id} type="button" role="tab" aria-selected={mode === id} onClick={() => setMode(id)}
+            className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-[12px] ${mode === id ? 'bg-ink font-semibold text-onsig' : 'text-mute hover:text-ink'}`}>
+            <Icon size={13} /> {t(label)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  if (mode === 'free') {
+    return (
+      <div ref={scroller} className="h-full overflow-y-auto p-2.5 min-[480px]:p-3">
+        {modes}
+        <FloorPlan />
+      </div>
+    );
+  }
 
   return (
     <div ref={scroller} className="h-full overflow-y-auto p-2.5 min-[480px]:p-3">
+      {modes}
       {empty.length > 0 && (
         <div className="mb-3 flex items-center gap-2">
           <p className="legend min-w-0 flex-1 truncate">{t('Glissez les enceintes entre les pièces ; le crayon modifie ou supprime une pièce.')}</p>
-          <button type="button" onClick={() => void prune()} data-on={confirmPrune} style={{ ['--c' as string]: 'var(--c-bad)' }}
+          <button type="button" onClick={() => void prune()} data-on={confirmPrune} style={tint('var(--c-bad)')}
             className="key flex shrink-0 items-center gap-1.5 !h-7 !text-[12px]" title={t('Supprime les pièces sans enceinte, dont celles créées au premier lancement (Salon, Cuisine…). Les enceintes ne sont pas touchées.')}>
             <Trash2 size={13} />
             {confirmPrune ? t('Supprimer {n} pièce(s) ?', { n: empty.length }) : t('Supprimer les pièces vides')}

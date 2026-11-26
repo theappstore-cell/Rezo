@@ -20,13 +20,18 @@ Rezo sends what your computer is playing to the speakers around your home, all a
 - **Speaker volume**: a second fader on each Console strip sets the speaker's own volume (the one the Sonos app shows) or the receiver's output level.
 - **Sync**: one button groups the active Sonos speakers the way the Sonos app does, so they play sample-aligned, and delays the other speakers to play with them.
 - **Sonos line-in**: for games, a Sonos with a line-in (Five, Port, Amp) can play the PC through a cable, the lowest delay a Sonos offers; Sync groups the other Sonos with it.
-- **Rooms and scenes**: group speakers into rooms, save complete mixes and recall them in one click.
-- **Views**: Rooms, Map (drag speakers between rooms) and Console (mixing desk with MIDI Learn), as tabs of one window that adapts to its width, down to 360 px.
-- **Media controls** (Windows): play/pause, previous, next and a seek bar for whatever the PC is playing (Spotify, a browser, a media player).
+- **Rooms and scenes**: group speakers into rooms, save complete mixes and recall them in one click (or with the 1-9 keys).
+- **Views**: Rooms, Map and Console (mixing desk with MIDI Learn), as tabs of one window that adapts to its width, down to 360 px. The Map shows speakers by room, or on a floor plan: import a picture of your home, place the speakers on it and watch a glow follow each one's level.
+- **Media controls** (Windows): play/pause, previous, next and a seek bar you can drag, for whatever the PC is playing (Spotify, a browser, a media player).
+- **Desktop widgets**: small borderless windows to leave on the desktop, Rainmeter style: player, master volume, rooms, scenes and level meter. Each one can stay on top of every window, behave like a normal window, stay below the windows, or sit on the desktop (still visible after Win+D); background opacity, size, position lock and click-through are set in Settings.
+- **Notification-area menu**: play/pause and tracks, rooms on/off, scenes, master volume and mute, and the widgets, without opening the window.
+- **Identify and network health**: a short chime on one speaker to tell it apart, and for each speaker its ping, jitter and lost echoes, with a Reconnect button when a stream has a problem.
+- **Quick editing**: undo and redo (Ctrl+Z / Ctrl+Y), keyboard shortcuts (press ? for the list), a right-click menu on every speaker, copy and paste of a speaker's settings (equalizer, effects, tone, delay) to another speaker or a whole room, drag to reorder Console strips and rooms.
+- **Personal touch**: a colour and an icon per speaker as well as per room, interface size from 70 % to 160 % (Ctrl++ / Ctrl+−), and a window that can be pinned on top.
 - **Audio mixer window**: volume and mute for each PC output (wired, Bluetooth, HDMI, USB) and each application, and switching the default output.
 - **Smart Output** (optional): mutes the PC output while network speakers play and restores that exact output afterwards.
 - **French and English** interface, switchable in Settings.
-- **Updates**: Rezo tells you when a new release is out and can download it into its own folder, check it against the release's SHA-256 checksums and restart on it.
+- **Updates**: Rezo tells you when a new release is out, shows its release notes, and can download it into its own folder, check it against the release's SHA-256 checksums and restart on it.
 
 ## Latency
 

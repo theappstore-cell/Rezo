@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal permissions: app commands, backend events, window dragging.",
-  "windows": ["main", "mixer"],
+  "description": "Minimal permissions: app commands, backend events, window dragging (main window, mixer, desktop widgets).",
+  "windows": ["main", "mixer", "widget-*"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",

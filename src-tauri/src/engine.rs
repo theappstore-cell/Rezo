@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering};
@@ -19,6 +19,7 @@ use crate::audio::{output_switch, sessions, BLOCK_SAMPLES, SAMPLE_RATE};
 use crate::network::discovery::{self, NativeAnnounce};
 use crate::network::sonos_upnp::{self as upnp, DeviceInfo};
 use crate::network::udp_streamer::{self, UdpConfig, UdpHandle};
+use crate::network::ping::{self, NetStats};
 use crate::network::{self, http_server, PcmTap};
 use crate::state::rooms::*;
 
@@ -35,6 +36,8 @@ pub struct SpeakerView {
     pub latency_ms: Option<u32>,
     pub device_volume: Option<u32>,
     pub synced_to: Option<String>,
+    // Echo round trips to the speaker over the last checks; None until it has answered once.
+    pub net: Option<NetStats>,
 }
 
 #[derive(Serialize, Clone)]
@@ -74,6 +77,11 @@ pub struct FullState {
     pub capture: CaptureView,
     pub pc_muted: bool,
     pub version: &'static str,
+    pub master_mute: bool,
+    pub pinned: bool,
+    pub ui_zoom: f32,
+    pub widgets: Vec<Widget>,
+    pub has_plan_image: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -165,6 +173,12 @@ pub struct Engine {
     volume_pending: Mutex<HashMap<String, u32>>,
     persist_notify: tokio::sync::Notify,
     stats_on: bool,
+    net: Mutex<HashMap<String, VecDeque<Option<u32>>>>,
+    // A desktop widget shows level meters: keep sending them while the main window is hidden.
+    widget_meters: AtomicBool,
+    // Speakers turned on by "Identify" only, turned off again once the chime has played.
+    identifying: Mutex<HashSet<String>>,
+    has_plan_image: AtomicBool,
 }
 
 struct Sub {
@@ -179,6 +193,8 @@ struct StatsSample {
     quiet: u64,
     total: u64,
 }
+
+const PLAN_IMAGE_FILE: &str = "plan-image.txt";
 
 // Delay for each path so that all of them play with the slowest one (bounded by the delay knob's range).
 fn alignment_delays(latencies: &[u32]) -> Vec<u32> {
@@ -210,8 +226,10 @@ impl Engine {
         let store = Arc::new(Store::load(config_dir));
         let router = Router::start();
         let pump = network::spawn_tap_pump();
-        let (master, ) = store.read(|c| (c.master_db, ));
+        let (master, master_mute) = store.read(|c| (c.master_db, c.master_mute));
         router.shared.master_db.store(master);
+        router.shared.master_mute.store(master_mute, Ordering::Relaxed);
+        let has_plan_image = store.dir().join(PLAN_IMAGE_FILE).exists();
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(4))
             .pool_max_idle_per_host(1)
@@ -250,6 +268,10 @@ impl Engine {
             volume_pending: Mutex::new(HashMap::new()),
             persist_notify: tokio::sync::Notify::new(),
             stats_on: std::env::var_os("REZO_STATS").is_some(),
+            net: Mutex::new(HashMap::new()),
+            widget_meters: AtomicBool::new(false),
+            identifying: Mutex::new(HashSet::new()),
+            has_plan_image: AtomicBool::new(has_plan_image),
         })
     }
 
@@ -273,7 +295,66 @@ impl Engine {
             tauri::async_runtime::spawn(me.clone().output_guard_loop());
             tauri::async_runtime::spawn(me.clone().volume_loop());
             tauri::async_runtime::spawn(me.clone().persist_loop());
+            tauri::async_runtime::spawn(me.clone().net_loop());
         });
+    }
+
+    // Pings every reachable speaker every 5 s while the main window is open (one thread per speaker, 1 s timeout).
+    async fn net_loop(self: Arc<Self>) {
+        loop {
+            if !self.ui_visible.load(Ordering::Acquire) {
+                let woken = self.ui_notify.notified();
+                tokio::pin!(woken);
+                woken.as_mut().enable();
+                if !self.ui_visible.load(Ordering::Acquire) {
+                    woken.await;
+                }
+                continue;
+            }
+            let reachable: HashSet<String> = self.online_ids().union(&self.running_ids()).cloned().collect();
+            let targets: Vec<(String, std::net::Ipv4Addr)> = self.store.read(|c| {
+                c.speakers
+                    .iter()
+                    .filter(|s| reachable.contains(&s.id))
+                    .filter_map(|s| s.address.parse().ok().map(|ip| (s.id.clone(), ip)))
+                    .collect()
+            });
+            if !targets.is_empty() {
+                let results = tauri::async_runtime::spawn_blocking(move || {
+                    std::thread::scope(|sc| {
+                        let handles: Vec<_> = targets.iter().map(|(_, ip)| { let ip = *ip; sc.spawn(move || ping::ping(ip, 1000)) }).collect();
+                        targets.iter().zip(handles).map(|((id, _), h)| (id.clone(), h.join().ok().flatten())).collect::<Vec<_>>()
+                    })
+                })
+                .await
+                .unwrap_or_default();
+                let mut changed = false;
+                {
+                    let mut net = self.net.lock();
+                    for (id, r) in results {
+                        let h = net.entry(id).or_default();
+                        let before = ping::summarize(h);
+                        ping::push(h, r);
+                        changed |= ping::summarize(h) != before;
+                    }
+                    let known: HashSet<String> = self.store.read(|c| c.speakers.iter().map(|s| s.id.clone()).collect());
+                    net.retain(|id, _| known.contains(id));
+                }
+                if changed {
+                    self.notify_changed();
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+
+    pub fn set_widget_meters(&self, on: bool) {
+        self.widget_meters.store(on, Ordering::Release);
+        self.ui_notify.notify_waiters();
+    }
+
+    fn meters_wanted(&self) -> bool {
+        self.ui_visible.load(Ordering::Acquire) || self.widget_meters.load(Ordering::Acquire)
     }
 
     // Parameter edits (a dragged fader or EQ point) reach the disk 300 ms after the last change.
@@ -334,6 +415,9 @@ impl Engine {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 self.changed.store(false, Ordering::Release);
                 self.emit("state", self.snapshot());
+                if let Some(app) = self.app.get() {
+                    crate::tray::refresh(app, &self, false);
+                }
             }
             self.store.flush();
             self.router.reap();
@@ -346,11 +430,11 @@ impl Engine {
 
     async fn meter_loop(self: Arc<Self>) {
         loop {
-            if !self.ui_visible.load(Ordering::Acquire) {
+            if !self.meters_wanted() {
                 let woken = self.ui_notify.notified();
                 tokio::pin!(woken);
                 woken.as_mut().enable();
-                if !self.ui_visible.load(Ordering::Acquire) {
+                if !self.meters_wanted() {
                     woken.await;
                 }
                 continue;
@@ -423,6 +507,8 @@ impl Engine {
             )
         };
         let rt = self.rt.lock().clone();
+        let net: HashMap<String, NetStats> =
+            self.net.lock().iter().filter_map(|(id, h)| ping::summarize(h).map(|st| (id.clone(), st))).collect();
         let streaming: HashMap<String, bool> =
             self.taps.read().iter().map(|(k, t)| (k.clone(), t.connected.load(Ordering::Relaxed))).collect();
         let (running_cap, cap_err) = match &*self.capture.lock() {
@@ -461,6 +547,7 @@ impl Engine {
                             latency_ms,
                             device_volume,
                             synced_to: follows.map(|cid| c.speaker(cid).map(|x| x.name.clone()).unwrap_or_else(|| cid.clone())),
+                            net: net.get(&s.id).cloned(),
                             speaker: s.clone(),
                         }
                     })
@@ -473,6 +560,11 @@ impl Engine {
                 capture: CaptureView { running: running_cap, error: cap_err },
                 pc_muted: self.pc_muted.load(Ordering::Relaxed),
                 version: env!("CARGO_PKG_VERSION"),
+                master_mute: c.master_mute,
+                pinned: c.window_pinned,
+                ui_zoom: c.ui_zoom,
+                widgets: c.widgets.clone(),
+                has_plan_image: self.has_plan_image.load(Ordering::Relaxed),
             }
         })
     }
@@ -535,6 +627,211 @@ impl Engine {
         let db = if db.is_finite() { db.clamp(DB_MIN, 6.0) } else { 0.0 };
         self.router.shared.master_db.store(db);
         self.store.write(|c| c.master_db = db);
+        self.persist_notify.notify_one();
+        // Desktop widgets and the tray show the master level too.
+        self.notify_changed();
+    }
+
+    pub fn set_master_mute(&self, on: bool) {
+        self.router.shared.master_mute.store(on, Ordering::Relaxed);
+        self.store.write(|c| c.master_mute = on);
+        self.notify_changed();
+    }
+
+    // Short chime on one speaker so it can be told apart from the others. A speaker that is off is turned on for
+    // the chime and off again afterwards.
+    pub async fn identify(self: &Arc<Self>, id: &str) -> Result<()> {
+        let line_in = self.store.read(|c| c.speaker(id).map(|s| s.plays_line_in())).ok_or_else(|| anyhow!("enceinte inconnue"))?;
+        if line_in {
+            bail!("Cette Sonos joue son entrée ligne : Rezo ne lui envoie pas de son.");
+        }
+        let started_here = !self.running_ids().contains(id);
+        if started_here {
+            if !self.online_ids().contains(id) {
+                bail!("L'enceinte est hors ligne.");
+            }
+            self.identifying.lock().insert(id.to_string());
+            self.activate_many(vec![id.to_string()]).await;
+            let deadline = Instant::now() + Duration::from_secs(12);
+            while !self.is_streaming(id) && Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            if !self.is_streaming(id) {
+                if self.identifying.lock().remove(id) {
+                    self.deactivate_many(vec![id.to_string()]).await;
+                }
+                bail!("L'enceinte n'a pas démarré la lecture.");
+            }
+        }
+        let target = match self.sinks.lock().get(id).map(|s| &s.kind) {
+            Some(SinkKind::Follower(c)) => c.clone(),
+            Some(SinkKind::LineIn) => bail!("Cette Sonos joue son entrée ligne : Rezo ne lui envoie pas de son."),
+            Some(_) => id.to_string(),
+            None => bail!("L'enceinte ne reçoit pas le flux."),
+        };
+        match self.sinks.lock().get(&target) {
+            Some(s) => s.shared.chime.store(true, Ordering::Relaxed),
+            None => bail!("L'enceinte ne reçoit pas le flux."),
+        }
+        if started_here {
+            let latency = self.snapshot().speakers.iter().find(|s| s.speaker.id == id).and_then(|s| s.latency_ms).unwrap_or(500);
+            let me = self.clone();
+            let id = id.to_string();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(latency as u64 + 1500)).await;
+                if me.identifying.lock().remove(&id) {
+                    me.deactivate_many(vec![id]).await;
+                    me.notify_changed();
+                }
+            });
+        }
+        self.notify_changed();
+        Ok(())
+    }
+
+    fn is_streaming(&self, id: &str) -> bool {
+        let tap = match self.sinks.lock().get(id) {
+            None => return false,
+            Some(s) => matches!(s.kind, SinkKind::Tap),
+        };
+        !tap || self.taps.read().get(id).map_or(false, |t| t.connected.load(Ordering::Relaxed))
+    }
+
+    // Stops and restarts one speaker's stream, for a speaker that reports an error or went silent.
+    pub async fn reconnect(self: &Arc<Self>, id: &str) {
+        self.identifying.lock().remove(id);
+        self.deactivate_many(vec![id.to_string()]).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        if let Some(e) = self.rt.lock().get_mut(id) {
+            e.error = None;
+        }
+        self.activate_many(vec![id.to_string()]).await;
+        self.notify_changed();
+    }
+
+    // Order of the speakers (Console strips) and rooms as the interface lists them; unknown ids are ignored.
+    pub fn reorder(&self, speakers: Option<Vec<String>>, rooms: Option<Vec<String>>) {
+        fn by_list<T>(items: &mut Vec<T>, ids: &[String], id: impl Fn(&T) -> &str) {
+            let pos = |x: &T| ids.iter().position(|i| i == id(x)).unwrap_or(usize::MAX);
+            items.sort_by_key(|x| pos(x));
+        }
+        self.store.write(|c| {
+            if let Some(ids) = &speakers {
+                by_list(&mut c.speakers, ids, |s| &s.id);
+            }
+            if let Some(ids) = &rooms {
+                by_list(&mut c.rooms, ids, |r| &r.id);
+            }
+        });
+        self.notify_changed();
+    }
+
+    // Empty string clears the colour or icon (back to the room's); None leaves it unchanged.
+    pub fn set_speaker_style(&self, id: &str, color: Option<String>, icon: Option<String>) {
+        self.store.write(|c| {
+            if let Some(sp) = c.speaker_mut(id) {
+                if let Some(col) = color {
+                    sp.color = (!col.is_empty()).then_some(col);
+                }
+                if let Some(i) = icon {
+                    sp.icon = (!i.is_empty()).then_some(i);
+                }
+                sp.sanitize_style();
+            }
+        });
+        self.notify_changed();
+    }
+
+    pub fn set_plan_position(&self, id: &str, pos: Option<(f32, f32)>) {
+        self.store.write(|c| {
+            if let Some(sp) = c.speaker_mut(id) {
+                sp.plan_x = pos.map(|p| p.0);
+                sp.plan_y = pos.map(|p| p.1);
+                sp.sanitize_style();
+            }
+        });
+        self.persist_notify.notify_one();
+    }
+
+    pub fn plan_image(&self) -> Option<String> {
+        std::fs::read_to_string(self.store.dir().join(PLAN_IMAGE_FILE)).ok()
+    }
+
+    // The floor plan picture, as a data URL the interface made (PNG, JPEG or WebP, 4 MB at most); None removes it.
+    pub fn set_plan_image(&self, data: Option<String>) -> Result<()> {
+        let path = self.store.dir().join(PLAN_IMAGE_FILE);
+        match data {
+            Some(d) => {
+                let ok_type = ["data:image/png;base64,", "data:image/jpeg;base64,", "data:image/webp;base64,"].iter().any(|p| d.starts_with(p));
+                if !ok_type || d.len() > 4 * 1024 * 1024 {
+                    bail!("image refusée : PNG, JPEG ou WebP de 3 Mo au plus");
+                }
+                std::fs::write(&path, d)?;
+                self.has_plan_image.store(true, Ordering::Relaxed);
+            }
+            None => {
+                let _ = std::fs::remove_file(&path);
+                self.has_plan_image.store(false, Ordering::Relaxed);
+            }
+        }
+        self.notify_changed();
+        Ok(())
+    }
+
+    pub fn set_pinned(&self, on: bool) {
+        self.store.write(|c| c.window_pinned = on);
+        self.notify_changed();
+    }
+
+    pub fn set_ui_zoom(&self, zoom: f32) -> f32 {
+        let z = clamp_zoom(zoom);
+        self.store.write(|c| c.ui_zoom = z);
+        self.persist_notify.notify_one();
+        z
+    }
+
+    pub fn widget_add(&self, kind: &str) -> Widget {
+        let w = self.store.write(|c| {
+            let mut n = c.widgets.len() + 1;
+            while c.widgets.iter().any(|w| w.id == format!("w{n}")) {
+                n += 1;
+            }
+            let mut w = Widget { id: format!("w{n}"), kind: kind.to_string(), ..Widget::default() };
+            w.clamp();
+            c.widgets.push(w.clone());
+            w
+        });
+        self.notify_changed();
+        w
+    }
+
+    pub fn widget_update(&self, id: &str, patch: &serde_json::Value) -> Result<Widget> {
+        let w = self.store.write(|c| -> Result<Widget> {
+            let w = c.widgets.iter_mut().find(|w| w.id == id).ok_or_else(|| anyhow!("widget inconnu"))?;
+            w.apply(patch)?;
+            Ok(w.clone())
+        })?;
+        self.notify_changed();
+        Ok(w)
+    }
+
+    pub fn widget_remove(&self, id: &str) {
+        self.store.write(|c| c.widgets.retain(|w| w.id != id));
+        self.notify_changed();
+    }
+
+    pub fn widget_moved(&self, id: &str, x: i32, y: i32) {
+        self.store.write(|c| {
+            if let Some(w) = c.widgets.iter_mut().find(|w| w.id == id) {
+                w.x = Some(x);
+                w.y = Some(y);
+            }
+        });
+        self.persist_notify.notify_one();
+    }
+
+    pub fn widgets(&self) -> Vec<Widget> {
+        self.store.read(|c| c.widgets.clone())
     }
 
     pub fn set_param(&self, id: &str, key: &str, value: &serde_json::Value) -> Result<()> {
@@ -895,6 +1192,8 @@ impl Engine {
     }
 
     pub async fn set_send(self: &Arc<Self>, id: &str, on: bool) {
+        // The user's choice wins over a pending "Identify" switch-off.
+        self.identifying.lock().remove(id);
         if on {
             self.activate_many(vec![id.to_string()]).await;
         } else {
@@ -973,7 +1272,11 @@ impl Engine {
     }
 
     pub fn update_output_switch(&self) {
-        let any_active = self.streaming_sinks() && !self.line_in_active();
+        // A speaker turned on only for an "Identify" chime does not mute the PC for those two seconds.
+        let any_active = {
+            let identifying = self.identifying.lock();
+            self.sinks.lock().iter().any(|(id, s)| s.kind.streams() && !identifying.contains(id))
+        } && !self.line_in_active();
         let want = self.store.read(|c| c.settings.smart_output && !c.local_pc && matches!(c.source, Source::System)) && any_active;
         {
             let _g = self.switch_lock.lock();

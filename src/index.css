@@ -127,6 +127,7 @@ svg.lucide {
 
 .key {
   --c: var(--c-ink);
+  --c-fg: var(--c-on-ink);
   height: 28px;
   padding: 0 10px;
   border-radius: 4px;
@@ -146,7 +147,7 @@ svg.lucide {
 .key[data-on="true"] {
   background: var(--c);
   border-color: var(--c);
-  color: #fff;
+  color: var(--c-fg);
 }
 .key:disabled {
   opacity: 0.45;
@@ -192,6 +193,31 @@ svg.lucide {
   50% {
     outline-color: transparent;
   }
+}
+
+/* Desktop widgets: the window is transparent, only the widget's own frame is drawn, always in dark tones. */
+.widget-dark {
+  --c-surface: #2b2b29;
+  --c-surface2: #333331;
+  --c-hover: #3d3d3a;
+  --c-inset: #161615;
+  --c-border: #4a4a46;
+  --c-border-strong: #73736c;
+  --c-ink: #f0f0ec;
+  --c-ink2: #c4c4bd;
+  --c-ink3: #a3a39c;
+  --c-on-ink: #1a1a19;
+  --c-ok: #4cc272;
+  --c-warn: #e0b341;
+  --c-bad: #f0736a;
+  --c-meter-off: rgba(255, 255, 255, 0.16);
+  color: var(--c-ink);
+}
+html.widget-window,
+html.widget-window body,
+html.widget-window #root {
+  background: transparent !important;
+  overflow: hidden;
 }
 
 @keyframes toast-in {
